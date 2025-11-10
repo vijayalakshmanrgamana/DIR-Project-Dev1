@@ -1,0 +1,67 @@
+.custom-card-history .slds-card__header {
+    background-color: var(--lwc-colorBackgroundCard, #f3f3f3); 
+    border-bottom: 1px solid var(--lwc-colorBorder, #e4e6e9);
+    padding: 0.75rem 1rem;
+    font-weight: 700;
+}
+
+.custom-card-history .slds-card__header-title {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--lwc-colorTextLabel, #181919);
+}
+
+.history-datatable {
+    border: none;
+    box-shadow: none;
+}
+
+.history-datatable thead tr th {
+    background-color: var(--lwc-colorBackgroundAlt, #fafafb); 
+    color: var(--lwc-colorTextLabel, #181919);
+    font-weight: 600; /* Increased font weight */
+    font-size: 0.8rem; /* Slightly larger font */
+    padding: 0.75rem 0.75rem; /* Increased horizontal padding */
+    border-bottom: 1px solid var(--lwc-colorBorder, #e4e6e9);
+}
+
+.history-datatable tbody tr td {
+    padding: 0.6rem 0.75rem; /* Increased horizontal padding */
+    border-top: 1px solid var(--lwc-colorBorder, #e4e6e9);
+}
+
+/* Highlight the total row */
+.history-datatable tbody tr:last-child {
+    background-color: #e3f2fd; /* Light blue background */
+    font-weight: 700;
+    border-top: 3px solid #90caf9; /* Prominent top border */
+}
+
+/* Spacer Row - visually blank */
+.history-datatable tbody tr:nth-last-child(2) td {
+    background-color: white !important;
+    border: none !important;
+    height: 12px;
+}
+
+/* 🛑 NEW: Reset styling for the first column (Case Issue) */
+.history-datatable tbody tr:last-child td:first-child a, 
+.history-datatable tbody tr:last-child td:first-child .slds-truncate {
+    color: inherit; /* Use default text color */
+    font-weight: 700; /* Use total row font-weight */
+    font-size: inherit;
+}
+
+/* ✅ NEW: Apply bold 'Sum' styling to the second column (Citation Form) */
+.history-datatable tbody tr:last-child td:nth-child(2) a, 
+.history-datatable tbody tr:last-child td:nth-child(2) .slds-truncate {
+    color: #0b5cab; /* Darker blue */
+    font-weight: 900; /* Very bold for prominence */
+    font-size: 0.9rem; /* Slightly larger text */
+}
+
+/* Align numeric columns right */
+.history-datatable td[data-type="currency"],
+.history-datatable td[data-type="number"] {
+    text-align: right;
+}

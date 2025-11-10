@@ -1,0 +1,50 @@
+<template>
+    <div class="custom-datatable-container">
+        <lightning-card 
+            title={dynamicTitle} 
+            icon-name="standard:account"
+            class="slds-card_boundary custom-card-history"
+        >
+            <div class="slds-p-horizontal_small slds-p-vertical_xx-small slds-relative">
+                
+                <template if:true={isLoading}>
+                    <lightning-spinner 
+                        alternative-text="Loading Data" 
+                        size="medium"
+                    ></lightning-spinner>
+                    <div class="slds-p-around_medium slds-text-color_weak slds-text-align_center">
+                        <p class="slds-text-heading_small">Loading payee association data...</p>
+                    </div>
+                </template>
+
+                <template if:false={isLoading}>
+                    <template if:true={autoTableData}>
+                        <lightning-datatable
+                            key-field="id"
+                            data={autoTableData}
+                            columns={autoColumns}
+                            hide-checkbox-column
+                            class="history-datatable"
+                        ></lightning-datatable>
+                    </template>
+
+                    <template if:false={autoTableData}>
+                        <div class="slds-p-around_medium slds-text-color_weak">
+                            <p class="slds-text-heading_small slds-m-bottom_small">
+                                No association data found.
+                            </p>
+                            <template if:true={autoError}>
+                                <div class="slds-box slds-theme_error slds-m-top_small">
+                                    <p class="slds-text-color_inverse slds-text-title_bold">Processing Error:</p>
+                                    <template if:true={shouldShowFinalError}>
+                                        <p class="slds-text-color_inverse">{autoError}</p>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </template>
+            </div>
+        </lightning-card>
+    </div>
+</template>
