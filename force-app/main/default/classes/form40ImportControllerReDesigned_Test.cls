@@ -563,8 +563,7 @@ public class form40ImportControllerReDesigned_Test {
                 form40ImportControllerReDesigned.revalidateEditedRows(
                     editedRows,
                     uniqueKey,
-                    importType,
-                    new List<Id>{violation.Id}
+                    importType                
                 );
             
             System.debug('*** SUCCESSFUL CALL ***');
@@ -751,9 +750,6 @@ public class form40ImportControllerReDesigned_Test {
                         PayeeAssociation associationData = new PayeeAssociation();
                         associationData.caseIssueId         = ci.Id;
                         associationData.caseIssueName       = ci.Name;
-                        associationData.netWages            = String.isEmpty(accP.netWages) ? 0 : toDecimal(accP.netWages);
-                        associationData.totalWageAssessment = String.isEmpty(accP.wageAsssesment) ? 0 : toDecimal(accP.wageAsssesment);
-                        associationData.deductionsTotal     = String.isEmpty(accP.totalDeductions) ? 0 : toDecimal(accP.totalDeductions);
                         associationData.factor              = String.isEmpty(accP.factor) ? 0 : toDecimal(accP.factor);
                         associationData.citationForm        = ci.Violation_Type__r.Violation_Type__c;
                         associationData.violationTypeName   = ci.Violation_Type__r.Violation_Type_Name__c;
@@ -998,10 +994,10 @@ public class form40ImportControllerReDesigned_Test {
                 htmlBody,     
                 'Account'
             ));
-            
+             
             
             Database.executeBatch(new RevertPayeeBatch(oldPayee, htmlBody, accountIds, caseRoleIds, payeeIds), 200);
-            Database.executeBatch(new DeletePayeeBatch(accountIds, caseRoleIds, payeeIds, htmlBody, htmlBody), 200);
+            Database.executeBatch(new DeletePayeeBatch(accountIds, caseRoleIds, payeeIds, htmlBody), 200);
 
             
         } catch (Exception e) {

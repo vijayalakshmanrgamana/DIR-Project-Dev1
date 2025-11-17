@@ -182,6 +182,19 @@ public without sharing class form40ImportControllerReDesigned {
 
     public void execute(QueueableContext context) {
       try {
+        // Reload Functionality (If the user hits reload button in the comoponent making the first Queuebale Job Info Record Status as Cancelled)
+        Import__c initialImport = [
+          SELECT Id, Job_Status__c
+          FROM Import__c
+          WHERE Unique_Key__c = :cacheKey AND Job_Sequence__c = 0
+        ];
+        if (
+          initialImport != null &&
+          initialImport.Job_Status__c == 'Cancelled'
+        ) {
+          deleteImports(cacheKey);
+          return;
+        }
         List<ImportWrapper> errorRecords = new List<ImportWrapper>();
         List<ImportWrapper> validRecords = new List<ImportWrapper>();
 
@@ -444,6 +457,10 @@ public without sharing class form40ImportControllerReDesigned {
         WHERE Unique_Key__c = :cacheKey AND Job_Sequence__c != NULL
         ORDER BY Job_Sequence__c
       ];
+      // When user hits reload Queueable class deletes all Import Records and when component polls for records return empty map so that component stops polling
+      if (JobInfos[0].Job_Status__c == 'Cancelled') {
+        return new Map<string, object>();
+      }
 
       Decimal totalProcessedRows = 0;
       Set<Id> fileIds = new Set<Id>();
@@ -452,7 +469,7 @@ public without sharing class form40ImportControllerReDesigned {
 
       for (Import__c jobInfo : JobInfos) {
         if (
-          jobInfo.Job_Status__c == 'Failed' &&
+          jobInfo.Job_Status__c == 'Failed' ||
           String.isNotBlank(jobInfo.Error_Message__c)
         ) {
           hasError = true;
@@ -585,52 +602,70 @@ public static List<ImportWrapper> revalidateEditedRows(
     string uniqueKey,
     Id caseId
   ) {
-    List<String> chunkUniqueKeys = new List<String>();
-    Map<String, ImportWrapper> keyToRow = new Map<String, ImportWrapper>();
+    try {
+      List<String> chunkUniqueKeys = new List<String>();
+      Map<String, ImportWrapper> keyToRow = new Map<String, ImportWrapper>();
 
-    for (ImportWrapper row : editedRows) {
-      String uKey = buildUniqueKey(row);
-      chunkUniqueKeys.add(uKey);
-      keyToRow.put(uKey, row);
-    }
+      for (ImportWrapper row : editedRows) {
+        String uKey = buildUniqueKey(row);
+        chunkUniqueKeys.add(uKey);
+        keyToRow.put(uKey, row);
+      }
+      System.Debug('Unique Keys Collected ' + chunkUniqueKeys);
+      // ONE SOQL for all edited rows
+      Map<String, Payee__c> matchingPayees = new Map<String, Payee__c>();
+      for (Payee__c p : [
+        SELECT Case_Role__r.Entity__r.AccountMatch__c, Payee_Association_JSON__c
+        FROM Payee__c
+        WHERE
+          Case_Role__r.Entity__r.AccountMatch__c IN :chunkUniqueKeys
+          AND Case_Management__c = :caseId
+      ]) {
+        matchingPayees.put(
+          p.Case_Role__r.Entity__r.AccountMatch__c.toLowerCase(),
+          p
+        );
+      }
+      System.debug('Matching Payee Found ' + matchingPayees);
 
-    // ONE SOQL for all edited rows
-    Map<String, Payee__c> matchingPayees = new Map<String, Payee__c>();
-    for (Payee__c p : [
-      SELECT Case_Role__r.Entity__r.AccountMatch__c, Payee_Association_JSON__c
-      FROM Payee__c
-      WHERE
-        Case_Role__r.Entity__r.AccountMatch__c IN :chunkUniqueKeys
-        AND Case_Management__c = :caseId
-    ]) {
-      matchingPayees.put(
-        p.Case_Role__r.Entity__r.AccountMatch__c.toLowerCase(),
-        p
+      List<ImportWrapper> errorRecords = new List<ImportWrapper>();
+      List<ImportWrapper> validRecords = new List<ImportWrapper>();
+
+      // Validate
+      for (String uKey : keyToRow.keySet()) {
+        ImportWrapper row = keyToRow.get(uKey);
+        System.debug('Row to Validate ' + row);
+        Payee__c dup = matchingPayees.get(uKey);
+        system.Debug('Dup PAyee Found ' + dup);
+        if (dup != null) {
+          row.isDuplicate = true;
+        }
+        System.debug('Row is Dup ' + row.isDuplicate);
+      }
+      for (ImportWrapper row : editedRows) {
+        row.errorMessages.clear();
+        row.isValid = true;
+        validateRow(row);
+        if (row.isValid) {
+          validRecords.add(row);
+        } else {
+          errorRecords.add(row);
+        }
+      }
+      saveValidRecords(validRecords, uniqueKey);
+      List<ImportWrapper> allRecords = new List<ImportWrapper>();
+      allRecords.addAll(validRecords);
+      allRecords.addAll(errorRecords);
+      System.Debug('Returned Records to UI ' + allRecords.size());
+      return allRecords;
+    } catch (Exception e) {
+      throw new AuraHandledException(
+        'An Exception occured in ReValidateEditedRows ' +
+          e.getMessage() +
+          ' ' +
+          e.getStackTraceString()
       );
     }
-
-    List<ImportWrapper> errorRecords = new List<ImportWrapper>();
-    List<ImportWrapper> validRecords = new List<ImportWrapper>();
-
-    // Validate
-    for (String uKey : keyToRow.keySet()) {
-      ImportWrapper row = keyToRow.get(uKey);
-      Payee__c dup = matchingPayees.get(uKey);
-      if (dup != null) {
-        row.isDuplicate = true;
-      }
-      validateRow(row);
-      if (row.isValid) {
-        validRecords.add(row);
-      } else {
-        errorRecords.add(row);
-      }
-    }
-    saveValidRecords(validRecords, uniqueKey);
-    List<ImportWrapper> allRecords = new List<ImportWrapper>();
-    allRecords.addAll(validRecords);
-    allRecords.addAll(errorRecords);
-    return allRecords;
   }
 
   // Save valid records
@@ -695,12 +730,93 @@ public static List<ImportWrapper> revalidateEditedRows(
       }
       return 'No valid records to insert.';
     } catch (Exception ex) {
-      throw new AuraHandledException(
-        'An error occured in SaveValidRecords ' +
+      if (System.isQueueable()) {
+        LIst<Import__c> latestImportRecord = [
+          SELECT Id, Error_Message__c, Job_Status__c
+          FROM Import__c
+          WHERE Unique_Key__c = :uniqueKey
+          ORDER BY CreatedDate
+          LIMIT 1
+        ];
+        System.Debug(
+          'Queries Latest Import Record ' + latestImportRecord.size()
+        );
+        //latestImportRecord[0].Job_Status__c = 'Failed';
+        latestImportRecord[0].Error_Message__c =
+          'An unexcepted Error occured while saving Import Record ' +
           ex.getMessage() +
           ' ' +
-          ex.getStackTraceString()
+          ex.getStackTraceString();
+        System.Debug('Assigned Error Message and Job Status');
+        System.Debug(latestImportRecord[0].Job_Status__c);
+        System.Debug(latestImportRecord[0].Error_Message__c);
+
+        update latestImportRecord;
+        System.Debug('Updated Import Record');
+        return 'Error logged to Import record for key: ' + uniqueKey;
+      } else {
+        throw new AuraHandledException(
+          'An error occured in SaveValidRecords ' +
+            ex.getMessage() +
+            ' ' +
+            ex.getStackTraceString()
+        );
+      }
+    }
+  }
+  // Make the Job Sequence 0 record Status as Cancelled when user hits reload
+  @AuraEnabled
+  public static void cancelImport(String uniqueKey) {
+    try {
+      List<Import__c> imports = [
+        SELECT Id, Job_Sequence__c, Job_Status__c
+        FROM Import__c
+        WHERE Unique_Key__c = :uniqueKey AND Job_Sequence__c = 0
+        LIMIT 1
+      ];
+      if (imports != null && !imports.isEmpty()) {
+        imports[0].Job_Status__c = 'Cancelled';
+        update imports;
+      }
+    } catch (Exception e) {
+      System.Debug(
+        'An Exception occured in cancelImport ' +
+          e.getMessage() +
+          ' ' +
+          e.getStackTraceString()
       );
+      throw new AuraHandledException(
+        'An Exception occured in cancelImport ' +
+          e.getMessage() +
+          ' ' +
+          e.getStackTraceString()
+      );
+    }
+  }
+
+  public static void deleteImports(string uniqueKey) {
+    List<Import__c> importsToDelete = [
+      SELECT Id, Results__c
+      FROM Import__c
+      WHERE Unique_Key__c = :uniqueKey
+    ];
+    set<Id> conDocIds = new Set<id>();
+    for (Import__c imp : importsToDelete) {
+      if (imp.Results__c != null) {
+        conDocIds.add(imp.Results__c);
+      }
+    }
+
+    List<ContentDocument> condocs = [
+      SELECT Id
+      FROM ContentDocument
+      WHERE Id IN :conDocIds
+    ];
+    if (!condocs.isEmpty()) {
+      delete condocs;
+    }
+    if (!importsToDelete.isEMpty()) {
+      delete importsToDelete;
     }
   }
 
@@ -718,7 +834,9 @@ public static List<ImportWrapper> revalidateEditedRows(
       'Factor'
     };
     for (String field : requiredFields) {
+      System.Debug(field + ' ' + row.fieldValues.get(field));
       if (String.isBlank(row.fieldValues.get(field))) {
+        System.Debug('Entered because ' + field + 'is blank');
         row.errorMessages.add(field + ' is required.');
         row.isValid = false;
       }
@@ -737,8 +855,20 @@ public static List<ImportWrapper> revalidateEditedRows(
     if (String.isNotBlank(directPay)) {
       string cleanedDirectPay = directPay.toLowerCase();
       if (cleanedDirectPay != 'yes' && cleanedDirectPay != 'no') {
+        System.Debug('Entered because ' + directPay);
         row.errorMessages.add(
           'Direct Pay is not Valid ,Enter either Yes or No'
+        );
+        row.isValid = false;
+      }
+    }
+    String empState = row.fieldValues.get('Employee State');
+    if (String.isNotBlank(empState)) {
+      string cleanedempState = empState.toLowerCase();
+      if (cleanedempState.length() > 2) {
+        System.Debug('Entered because ' + empState);
+        row.errorMessages.add(
+          'Invalid value for Employee State — must be a 2-character state code (e.g., CA)'
         );
         row.isValid = false;
       }
@@ -755,10 +885,12 @@ public static List<ImportWrapper> revalidateEditedRows(
         try {
           Decimal num = Decimal.valueOf(value);
           if (num < 0) {
+            System.Debug('Entered because ' + field);
             row.errorMessages.add(field + ' cannot be negative.');
             row.isValid = false;
           }
         } catch (Exception e) {
+          System.Debug('Entered because ' + field);
           row.errorMessages.add(field + ' must be a valid number.');
           row.isValid = false;
         }
@@ -869,9 +1001,11 @@ public static List<ImportWrapper> revalidateEditedRows(
         ORDER BY CreatedDate DESC
         LIMIT 1
       ];
-      system.Debug('JOb Found ' + jobLIst.size() + jobLIst[0].Status);
-      if (jobLIst[0].Status != 'Completed') {
-        return 'Payee processing is in progress. A confirmation email will be sent when it is complete.';
+      if (!jobLIst.isEmpty()) {
+        system.Debug('JOb Found ' + jobLIst.size() + jobLIst[0].Status);
+        if (jobLIst[0].Status != 'Completed') {
+          return 'Payee processing is in progress. A confirmation email will be sent when it is complete.';
+        }
       }
 
       ProcessImportRecordsRedesigned batch = new ProcessImportRecordsRedesigned();

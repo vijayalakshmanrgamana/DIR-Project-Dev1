@@ -1,58 +1,165 @@
 public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.Stateful, Database.AllowsCallouts {
-
-    private Map<Id, Payee__c> payeeToUpdateMap;
-    private String emailHtmlBody; 
-    private String additionalNote; 
-    Set<Id> accountIds;
-    Set<Id> caseRoleIds;
-    Set<Id> payeeIds;
-
+    
+    
+    private List<ContentVersion> payeeRecordFiles;
+    private Set<Id> contentDocumentIdsForCleanup = new Set<Id>();
+    
+    private Set<Id> accountIds;
+    private Set<Id> caseRoleIds;
+    private Set<Id> payeeIds;
+    private Id caseId;
+    private String importType;
+    private Integer insertedAccounts;
+    private Integer insertedCaseRoles;
+    private Integer insertedPayees;
+    private Integer successCountPayee;
+    private Integer failureCountPayee;
+    private Boolean batchError;
+    private Integer batchRunCount;
+    private Integer NumberofImportRecordsInserted;
+    private String allErrorMessages;
+    private String creationErrorTable;
+    private String updateerrorTable;
+    public Boolean reverted = false;
+    public String uniqueKey;    
+    
+    
+    public Integer batchCount = 0;
+    
     private Map<String, Integer> processSummary = new Map<String, Integer> {
         'Payee_Updated' => 0,
-        'Payee_Failed' => 0
-    };
-
-    private List<WrapperError> failedRecords = new List<WrapperError>();
-
-    public RevertPayeeBatch(List<Payee__c> payeeRecords, String emailHtmlBody, 
-                            Set<Id> accountIds, Set<Id> caseRoleIds, Set<Id> payeeIds) {
-        this.payeeToUpdateMap = new Map<Id, Payee__c>();
-        if (payeeRecords != null) {
-            for (Payee__c p : payeeRecords) {
-                if (p != null && p.Id != null) {
-                    this.payeeToUpdateMap.put(p.Id, p);
-                }
-            }
-        }
-        this.emailHtmlBody = (emailHtmlBody == null) ? '' : emailHtmlBody;
-        this.additionalNote = (additionalNote == null) ? '' : additionalNote;
+            'Payee_Failed' => 0
+            };
+                private List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
+                private List<BatchEmailService.WrapperError> failedRecordsRevert = new List<BatchEmailService.WrapperError>();
+    
+    
+    public RevertPayeeBatch(
+        Set<Id> accountIds,
+        Set<Id> caseRoleIds,
+        Set<Id> payeeIds,
+        Id caseId,
+        String importType,
+        Integer insertedAccounts,
+        Integer insertedCaseRoles,
+        Integer insertedPayees,
+        Integer successCountPayee,
+        Integer failureCountPayee,
+        Boolean batchError,
+        Integer batchRunCount,
+        Integer numberOfImportRecordsInserted,
+        String allErrorMessages,
+        String creationErrorTable,
+        String updateerrorTable,
+        String uniqueKey // Key for the ContentVersion Title
+    )
+    {
         this.accountIds = accountIds;
         this.caseRoleIds = caseRoleIds;
-        this.payeeIds = payeeIds;
+        this.payeeIds = payeeIds;        
+        this.caseId = caseId;
+        this.importType = importType;
+        this.insertedAccounts = insertedAccounts;
+        this.insertedCaseRoles = insertedCaseRoles;
+        this.insertedPayees = insertedPayees;
+        this.successCountPayee = successCountPayee;
+        this.failureCountPayee = failureCountPayee;
+        this.batchError = batchError;
+        this.batchRunCount = batchRunCount;
+        this.numberOfImportRecordsInserted = numberOfImportRecordsInserted;
+        this.allErrorMessages = allErrorMessages;
+        this.creationErrorTable = creationErrorTable;
+        this.updateerrorTable = updateerrorTable;
+        this.uniqueKey = uniqueKey;
     }
-
+    
+    
+    // --- start Method (Queries Payee__c records to be reverted) ---
     public Database.QueryLocator start(Database.BatchableContext bc) {
-        if (payeeToUpdateMap == null || payeeToUpdateMap.isEmpty()) {
-            return Database.getQueryLocator([SELECT Id, Name FROM Payee__c WHERE Id = :null]);
-        }
-        return Database.getQueryLocator([SELECT Id, Name FROM Payee__c WHERE Id IN :payeeToUpdateMap.keySet()]);
+        
+        String contentTitlePattern = 'PayeeRevertData' + this.uniqueKey + '%';
+        return Database.getQueryLocator([
+            SELECT Id, VersionData, Title, ContentDocumentId
+            FROM ContentVersion
+            WHERE Title LIKE :contentTitlePattern
+        ]);
     }
-
+    
+    
     public void execute(Database.BatchableContext bc, List<SObject> scope) {
-        try {
-            List<Payee__c> updates = new List<Payee__c>();
-            for (SObject s : scope) {
-                Payee__c current = (Payee__c) s;
-                Payee__c prepared = payeeToUpdateMap.get(current.Id);
-                if (prepared != null) {
-                    prepared.Id = current.Id;
-                    updates.add(prepared);
+        
+        // Scope is List<ContentVersion>
+        List<ContentVersion> cvFiles = (List<ContentVersion>)scope;
+        
+        // This batch expects to process ContentVersion records
+        if (cvFiles.isEmpty()) {
+            return;
+        }
+        
+        Map<Id, Payee__c> updatesMap = new Map<Id, Payee__c>();
+        
+        // Assuming batch size is 1 or processing the entire chunk of CV files
+        ContentVersion currentCv = cvFiles[0]; 
+        
+        // Process file and get the map of revert data
+        Map<Id, Map<String, String>> aggregatedRevertDataMap = processFile(currentCv);
+        
+        List<ContentDocument> documentsToProcess = new List<ContentDocument>();
+        
+        if (aggregatedRevertDataMap != null) {
+            List<Id> keyList = new List<Id>(aggregatedRevertDataMap.keySet());
+            
+            for (Id payeeId : keyList) {
+                Map<String, String> details = aggregatedRevertDataMap.get(payeeId);
+                
+                if (details != null) {
+                    Payee__c preparedPayee = new Payee__c(Id = payeeId);
+                    
+                    if (details.containsKey('Payee_Association_JSON__c')) {
+                        preparedPayee.Payee_Association_JSON__c = details.get('Payee_Association_JSON__c');
+                    }
+                    if (details.containsKey('Direct_Pay__c')) {
+                        preparedPayee.Direct_Pay__c = details.get('Direct_Pay__c');
+                    }
+                    if (details.containsKey('NetWages__c') && String.isNotEmpty(details.get('NetWages__c'))) {
+                        preparedPayee.NetWages__c = Decimal.valueOf(details.get('NetWages__c'));
+                    }
+                    if (details.containsKey('WageAssessment__c') && String.isNotEmpty(details.get('WageAssessment__c'))) {
+                        preparedPayee.WageAssessment__c = Decimal.valueOf(details.get('WageAssessment__c'));
+                    }
+                    if (details.containsKey('TotalDeductions__c') && String.isNotEmpty(details.get('TotalDeductions__c'))) {
+                        preparedPayee.TotalDeductions__c = Decimal.valueOf(details.get('TotalDeductions__c'));
+                    }
+                    if (details.containsKey('Factor__c') && String.isNotEmpty(details.get('Factor__c'))) {
+                        preparedPayee.Factor__c = Decimal.valueOf(details.get('Factor__c'));
+                    }
+                    if (details.containsKey('Post_Citation_Interest_for_Wages__c') && String.isNotEmpty(details.get('Post_Citation_Interest_for_Wages__c'))) {
+                        preparedPayee.Post_Citation_Interest_for_Wages__c = Decimal.valueOf(details.get('Post_Citation_Interest_for_Wages__c'));
+                    }
+                    if (details.containsKey('Post_Judgment_Interest_for_Wages__c') && String.isNotEmpty(details.get('Post_Judgment_Interest_for_Wages__c'))) {
+                        preparedPayee.Post_Judgment_Interest_for_Wages__c = Decimal.valueOf(details.get('Post_Judgment_Interest_for_Wages__c'));
+                    }
+                    System.debug('preparedPayee :'+ preparedPayee);
+                    updatesMap.put(preparedPayee.Id, preparedPayee);
+                } else {
+                    // Log error: Revert data missing for this ID inside the file
+                    failedRecordsRevert.add(new BatchEmailService.WrapperError(
+                        payeeId, 
+                        'N/A', 
+                        'Revert data not found in ContentVersion file: ' + currentCv.Title, 
+                        'Payee Lookup'
+                    ));
                 }
             }
-
+        }
+        
+        List<Payee__c> updates = updatesMap.values();
+        
+        // --- Perform DML Update on Payee records ---
+        try {
             if (!updates.isEmpty()) {
                 List<Database.SaveResult> results = Database.update(updates, false);
-
+                
                 for (Integer i = 0; i < results.size(); i++) {
                     if (results[i].isSuccess()) {
                         processSummary.put('Payee_Updated', processSummary.get('Payee_Updated') + 1);
@@ -60,145 +167,138 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
                         processSummary.put('Payee_Failed', processSummary.get('Payee_Failed') + 1);
                         Database.Error err = results[i].getErrors()[0];
                         Payee__c failedRec = updates[i];
-                        failedRecords.add(new WrapperError(
+                        
+                        // Try to get Payee Name from the revert data for logging
+                        String payeeNameForError = (aggregatedRevertDataMap != null && aggregatedRevertDataMap.get(failedRec.Id) != null) 
+                            ? aggregatedRevertDataMap.get(failedRec.Id).get('Payee_Name__c') : 'N/A';
+                        
+                        failedRecordsRevert.add(new BatchEmailService.WrapperError(
                             failedRec.Id, 
-                            failedRec.Payee_Name__c, 
+                            payeeNameForError, 
                             err.getMessage(), 
-                            'Payee'
+                            'Payee DML Update'
                         ));
+                        System.debug('failedRecordsRevert : '+failedRecordsRevert);
+                        System.debug('failedRecordsRevert Size :'+failedRecordsRevert.size());
                     }
                 }
             }
         } catch (Exception ex) {
-            failedRecords.add(new WrapperError(null, null, ex.getMessage(), 'General Error'));
+            this.allErrorMessages += 'Error :' + ex.getMessage();
         }
-    }
-
-    /**
-     * finish - build email summary and send to running user
-     */
-    public void finish(Database.BatchableContext bc) {
-        // 🧾 Summary Table
-        String summaryHtml = emailHtmlBody + '<br/> <br/>' +
-            '<html>' +
-            '<head><meta charset="UTF-8"></head>' +
-            '<body style="font-family:Arial, sans-serif; font-size:14px; margin:0; padding:0;">' +
-            '<div style="border:2px solid #0176D3; padding:10px; display:inline-block; border-radius:6px;">' +
-            '<table border="0" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">' +
-            '<tr><td>🧾 <b>Payees Updated:</b></td><td>' + String.valueOf(processSummary.get('Payee_Updated')) + '</td></tr>' +
-            '<tr><td>⚠️ <b>Payees Failed:</b></td><td>' + String.valueOf(processSummary.get('Payee_Failed')) + '</td></tr>' +
-            '</table></div><br/>';
-
-        // ⚠️ Failed Records Table
-        if (!failedRecords.isEmpty()) {
-            summaryHtml +=
-                '<h4 style="color:#E67E22; margin-bottom: 5px;">⚠️ Failed Update Record Details</h4>' +
-                '<div style="border:1px solid #FFD700; padding:10px; background-color:#FFFACD;">' +
-                '<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; width:100%;">' +
-                '<tr style="background-color:#F2F3F4;">' +
-                '<th align="left">Object Type</th>' +
-                '<th align="left">Record Id</th>' +
-                '<th align="left">Name</th>' +
-                '<th align="left">Error Message</th>' +
-                '</tr>';
-
-            for (WrapperError err : failedRecords) {
-                summaryHtml += '<tr>' +
-                    '<td>' + (err.objectType != null ? err.objectType : '-') + '</td>' +
-                    '<td>' + (err.recordId != null ? err.recordId : '-') + '</td>' +
-                    '<td>' + (err.name != null ? err.name : '-') + '</td>' +
-                    '<td style="color:red;">' + (err.errorMsg != null ? err.errorMsg : '-') + '</td>' +
-                    '</tr>';
-            }
-
-            summaryHtml += 
-                '</table></div><br/>' +
-                '<div style="background-color:#fff3cd; border:1px solid #ffeeba; color:#856404; padding:12px 15px; border-radius:6px; margin-top:10px; margin-bottom:15px;">' +
-                '<p style="font-size:13px; margin:0;">' +
-                '<b>⚠️ Note:</b> If any <b>Payee</b> update failed due to validation or temporary errors, there is <b>no issue for update</b>. ' +
-                'You can fix the data for failed rows (see Ids above) and re-upload; it should work fine on retry.' +
-                '</p>' +
-                '<p style="font-size:12px; color:#555; margin-top:6px;"><i>' + escapeHtml(additionalNote) + '</i></p>' +
-                '</div><br/>';
-        } else {
-            emailHtmlBody = emailHtmlBody.replaceAll(
-                '<tr><td>✅ <b>Payees Updated Successfully:</b></td><td>\\d+</td></tr>', 
-                '<tr><td>✅ <b>Payees Updated Successfully:</b></td><td>0</td></tr>'
-            );
-            
-            summaryHtml = 
-                '<h3 style="color:#27AE60;">The transaction has been fully reverted without any errors.</h3>' 
-                + emailHtmlBody;
-            
-            if (!accountIds.isEmpty()) {
-                summaryHtml = emailHtmlBody;
-            }
-            
-            System.debug(summaryHtml);
-        }
-
-        String userEmail = '';
-        try {
-            userEmail = [SELECT Email FROM User WHERE Id = :UserInfo.getUserId() LIMIT 1].Email;
-        } catch (Exception e) {
-            System.debug('Could not fetch user email: ' + e.getMessage());
-        }
-
-        if (String.isNotBlank(userEmail) && accountIds.isEmpty()) {
-            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-            mail.setToAddresses(new String[]{ userEmail });
-            mail.setSubject('Apex Batch Job Completed - Revert Payee Summary Report');
-            mail.setHtmlBody(summaryHtml);
-            mail.setCharset('UTF-8');
-
+        
+        // --- CORE CHANGE: Delete the ContentVersion record now and collect ContentDocumentId ---
+        if (currentCv != null && currentCv.ContentDocumentId != null) {
             try {
-                Messaging.sendEmail(new List<Messaging.SingleEmailMessage>{ mail });
-            } catch (Exception exSend) {
-                System.debug('Email send failed: ' + exSend.getMessage());
+                delete new ContentDocument(
+                    Id = currentCv.ContentDocumentId
+                );
+            } catch (Exception e) {
+                System.debug('Error deleting file ' + currentCv.Title + ': ' + e.getMessage());
+                this.allErrorMessages += 'Error deleting file (' + currentCv.Title + '): ' + e.getMessage() + '\n';
+                this.batchError = true;
             }
-            Messaging.SendEmailResult[] results = Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
-            
-            if (results != null && results.size() > 0) {
-                if (results[0].isSuccess()) {
-                    System.debug('Email sent successfully.');
-                } else {
-                    System.debug('Email failed: ' + results[0].getErrors()[0].getMessage());
-                }
-            }    
-            
-        } else {
-            System.debug('No user email found. Summary: ' + summaryHtml);
         }
-
-        if (!accountIds.isEmpty()) {
-            Database.executeBatch(new DeletePayeeBatch(accountIds, caseRoleIds, payeeIds, summaryHtml, null), 200);
+        
+    }
+    
+    // --- Helper Method to Process a Single ContentVersion File (Remains the same) ---
+    private Map<Id, Map<String, String>> processFile(ContentVersion cv) {
+        Map<Id, Map<String, String>> revertDataMap = null;
+        if (cv.VersionData != null) {
+            try {
+                // Convert Blob to String and deserialize
+                String serializedData = cv.VersionData.toString();
+                
+                revertDataMap = (Map<Id, Map<String, String>>) JSON.deserialize(
+                    serializedData, 
+                    Map<Id, Map<String, String>>.class
+                );
+            } catch (Exception e) {
+                // Log the deserialization error associated with the file
+                System.debug('Error deserializing ContentVersion data from file ' + cv.Title + ': ' + e.getMessage());
+                this.batchError = true;
+                this.allErrorMessages += 'Error deserializing Payee Revert Data from file (' + cv.Title + '): ' + e.getMessage() + '\n';
+            }
+        } else { 
+            System.debug('ContentVersion file is empty: ' + cv.Title);
+            this.batchError = true;
+            this.allErrorMessages += 'Payee Revert Data file is empty: ' + cv.Title + '\n';
+        }
+        return revertDataMap;
+    }
+    
+    
+    // --- finish Method (Corrected DML cleanup) ---
+    public void finish(Database.BatchableContext bc) {
+        
+        
+        if (failedRecordsRevert.isEmpty()) {
+            reverted = true;
+        }
+        
+        Id jobId = BC.getJobId();
+        
+        // 2. Query the AsyncApexJob record to check ExtendedStatus
+        AsyncApexJob job = [
+            SELECT Id, ExtendedStatus, NumberOfErrors
+            FROM AsyncApexJob
+            WHERE Id = :jobId
+            LIMIT 1
+        ];
+        if (job.ExtendedStatus != null) {
+            reverted = false;
+            this.allErrorMessages += 'Apex Job : ' + job.ExtendedStatus;
+            this.batchError = true;
+        }
+        
+        If(accountIds.IsEmpty()){
+            BatchEmailService.sendBatchSummaryEmail(
+                caseId,
+                importType,
+                insertedAccounts,
+                insertedCaseRoles,
+                insertedPayees,
+                successCountPayee,
+                failureCountPayee,
+                batchError,
+                batchRunCount,
+                numberOfImportRecordsInserted,
+                allErrorMessages,
+                creationErrorTable,
+                updateerrorTable,
+                processSummary,
+                'RevertPayeeBatch',
+                reverted,
+                failedRecordsDelete,
+                failedRecordsRevert
+            );
+        }
+        else {
+            Database.executeBatch(
+                new DeletePayeeBatch(
+                    accountIds,
+                    caseRoleIds,
+                    payeeIds,
+                    caseId,
+                    importType,
+                    insertedAccounts,
+                    insertedCaseRoles,
+                    insertedPayees,
+                    successCountPayee,
+                    failureCountPayee,
+                    batchError,
+                    batchRunCount,
+                    NumberofImportRecordsInserted,
+                    allErrorMessages,
+                    creationErrorTable,
+                    updateerrorTable,
+                    reverted,
+                    'RevertPayeeBatch',
+                    failedRecordsRevert
+                ),
+                200
+            );
         }
     }
-
-    // Wrapper for error details
-    public class WrapperError {
-        public Id recordId;
-        public String name;
-        public String errorMsg;
-        public String objectType;
-
-        public WrapperError(Id recordId, String name, String errorMsg, String objectType) {
-            this.recordId = recordId;
-            this.name = name;
-            this.errorMsg = errorMsg;
-            this.objectType = objectType;
-        }
-    }
-
-    public static String escapeHtml(String input) {
-        if (input == null) return '';
-        String output = input;
-        output = output.replace('&', '&amp;');
-        output = output.replace('<', '&lt;');
-        output = output.replace('>', '&gt;');
-        output = output.replace('"', '&quot;');
-        output = output.replace('\'', '&#39;');
-        return output;
-    }
-
 }

@@ -1,12 +1,26 @@
 public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.Stateful, Database.AllowsCallouts {
 
-    Set<Id> accountIds;
-    Set<Id> caseRoleIds;
-    Set<Id> payeeIds;
-    String emailHtmlBody;
-    String insertRecordDeletion;
-
-    Map<String, Integer> processSummary = new Map<String, Integer> {
+    private Set<Id> accountIds;
+    private Set<Id> caseRoleIds;
+    private Set<Id> payeeIds;
+    private Id caseId;
+    private String importType;
+    private Integer insertedAccounts;
+    private Integer insertedCaseRoles;
+    private Integer insertedPayees;
+    private Integer successCountPayee;
+    private Integer failureCountPayee;
+    private Boolean batchError;
+    private Integer batchRunCount;
+    private Integer numberOfImportRecordsInserted;
+    private String allErrorMessages;
+    private String creationErrorTable;
+    private String updateerrorTable;
+    public Boolean reverted;
+	public String batchName;
+    public List<BatchEmailService.WrapperError> failedRecordsRevert;
+    // Summary Map
+    Map<String, Integer> processSummary = new Map<String, Integer>{
         'Account_Deleted' => 0,
         'CaseRole_Deleted' => 0,
         'Payee_Deleted' => 0,
@@ -15,27 +29,68 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
         'Payee_Failed' => 0
     };
 
-    // For failed records
-    List<WrapperError> failedRecords = new List<WrapperError>();
+    // Use WrapperError from BatchEmailService (not local)
+    List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
 
-    public DeletePayeeBatch(Set<Id> accountIds, Set<Id> caseRoleIds, Set<Id> payeeIds, String emailHtmlBody, String insertRecordDeletion) {
-        this.emailHtmlBody = emailHtmlBody;
+    // Constructor
+    public DeletePayeeBatch(
+        Set<Id> accountIds,
+        Set<Id> caseRoleIds,
+        Set<Id> payeeIds,
+        Id caseId,
+        String importType,
+        Integer insertedAccounts,
+        Integer insertedCaseRoles,
+        Integer insertedPayees,
+        Integer successCountPayee,
+        Integer failureCountPayee,
+        Boolean batchError,
+        Integer batchRunCount,
+        Integer numberOfImportRecordsInserted,
+        String allErrorMessages,
+        String creationErrorTable,
+        String updateerrorTable,
+        boolean reverted,
+        String batchName,
+        List<BatchEmailService.WrapperError> failedRecordsRevert
+    ) {
         this.accountIds = accountIds;
         this.caseRoleIds = caseRoleIds;
         this.payeeIds = payeeIds;
-        this.insertRecordDeletion = insertRecordDeletion;
+        this.caseId = caseId;
+        this.importType = importType;
+        this.insertedAccounts = insertedAccounts;
+        this.insertedCaseRoles = insertedCaseRoles;
+        this.insertedPayees = insertedPayees;
+        this.successCountPayee = successCountPayee;
+        this.failureCountPayee = failureCountPayee;
+        this.batchError = batchError;
+        this.batchRunCount = batchRunCount;
+        this.numberOfImportRecordsInserted = numberOfImportRecordsInserted;
+        this.allErrorMessages = allErrorMessages;
+        this.creationErrorTable = creationErrorTable;
+        this.updateerrorTable = updateerrorTable;
+        this.reverted = reverted;
+        this.batchName = batchName;
+        this.failedRecordsRevert = failedRecordsRevert;
     }
 
+    // Batch Start
     public Database.QueryLocator start(Database.BatchableContext bc) {
-        return Database.getQueryLocator([SELECT Id, Name FROM Account WHERE Id IN :accountIds]);
+        // Query Accounts for deletion
+        return Database.getQueryLocator([
+            SELECT Id, Name FROM Account WHERE Id IN :accountIds
+        ]);
     }
 
+    // Batch Execute
     public void execute(Database.BatchableContext bc, List<SObject> scope) {
         try {
-
-            // Delete Case Roles
+            // --- Delete Case Roles ---
             if (!caseRoleIds.isEmpty()) {
-                List<Case_Role__c> caseRoleList = [SELECT Id, Name FROM Case_Role__c WHERE Id IN :caseRoleIds LIMIT 200];
+                List<Case_Role__c> caseRoleList = [
+                    SELECT Id, Name FROM Case_Role__c WHERE Id IN :caseRoleIds LIMIT 200
+                ];
                 List<Database.DeleteResult> caseRoleResults = Database.delete(caseRoleList, false);
 
                 for (Integer i = 0; i < caseRoleResults.size(); i++) {
@@ -44,14 +99,21 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     } else {
                         processSummary.put('CaseRole_Failed', processSummary.get('CaseRole_Failed') + 1);
                         Database.Error err = caseRoleResults[i].getErrors()[0];
-                        failedRecords.add(new WrapperError(caseRoleList[i].Id, caseRoleList[i].Name, err.getMessage(), 'Case Role'));
+                        failedRecordsDelete.add(new BatchEmailService.WrapperError(
+                            caseRoleList[i].Id,
+                            caseRoleList[i].Name,
+                            err.getMessage(),
+                            'Case Role'
+                        ));
                     }
                 }
             }
 
-            // Delete Accounts
+            // --- Delete Accounts ---
             if (!accountIds.isEmpty()) {
-                List<Account> accList = [SELECT Id, Name FROM Account WHERE Id IN :accountIds LIMIT 200];
+                List<Account> accList = [
+                    SELECT Id, Name FROM Account WHERE Id IN :accountIds LIMIT 200
+                ];
                 List<Database.DeleteResult> accDeleteResults = Database.delete(accList, false);
 
                 for (Integer i = 0; i < accDeleteResults.size(); i++) {
@@ -60,14 +122,21 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     } else {
                         processSummary.put('Account_Failed', processSummary.get('Account_Failed') + 1);
                         Database.Error err = accDeleteResults[i].getErrors()[0];
-                        failedRecords.add(new WrapperError(accList[i].Id, accList[i].Name, err.getMessage(), 'Account'));
+                        failedRecordsDelete.add(new BatchEmailService.WrapperError(
+                            accList[i].Id,
+                            accList[i].Name,
+                            err.getMessage(),
+                            'Account'
+                        ));
                     }
                 }
             }
 
-            // Delete Payees
+            // --- Delete Payees ---
             if (!payeeIds.isEmpty()) {
-                List<Payee__c> payeeList = [SELECT Id, Name FROM Payee__c WHERE Id IN :payeeIds LIMIT 200];
+                List<Payee__c> payeeList = [
+                    SELECT Id, Name FROM Payee__c WHERE Id IN :payeeIds LIMIT 200
+                ];
                 List<Database.DeleteResult> payeeResults = Database.delete(payeeList, false);
 
                 for (Integer i = 0; i < payeeResults.size(); i++) {
@@ -76,120 +145,70 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     } else {
                         processSummary.put('Payee_Failed', processSummary.get('Payee_Failed') + 1);
                         Database.Error err = payeeResults[i].getErrors()[0];
-                        failedRecords.add(new WrapperError(payeeList[i].Id, payeeList[i].Name, err.getMessage(), 'Payee'));
+                        failedRecordsDelete.add(new BatchEmailService.WrapperError(
+                            payeeList[i].Id,
+                            payeeList[i].Name,
+                            err.getMessage(),
+                            'Payee'
+                        ));
                     }
                 }
             }
 
         } catch (Exception ex) {
-            failedRecords.add(new WrapperError(null, null, ex.getMessage(), 'General Error'));
+            failedRecordsDelete.add(new BatchEmailService.WrapperError(
+                null, null, ex.getMessage(), 'General Error'
+            ));
         }
     }
 
+    // Batch Finish
     public void finish(Database.BatchableContext bc) {
-        // 🧾 Summary Table
-        String summaryHtml = insertRecordDeletion + '<br/> <br/>';
-
-        summaryHtml +=
-        '<html>' +
-        '<head><meta charset="UTF-8"></head>' +
-        '<body style="font-family:Arial, sans-serif; font-size:14px; margin:0; padding:0;">' +
-
-        '<div style="background-color:#fff3cd; border:1px solid #ffeeba; color:#856404; padding:12px 15px; border-radius:6px; margin-bottom:15px;">' +
-        '<b>⚠️ Note:</b> Some <b>Account</b>, <b>Case Role</b>, or <b>Payee</b> records may have been partially processed due to validation or system errors during the batch run. ' +
-        'As a result, a few records were inserted but could not be deleted automatically. The corresponding record Ids are provided below. ' +
-        'Please manually delete these records (or remove them using a query) before re-uploading the corrected data. After cleanup, you can re-upload' +
-        '</div>' +
-
-        '<div style="border:2px solid #0176D3; padding:10px; display:inline-block; border-radius:6px;">' +
-        '<table border="0" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">' +
-        '<tr><td>🧾 <b>Accounts Deleted:</b></td><td>' + processSummary.get('Account_Deleted') + '</td></tr>' +
-        '<tr><td>⚠️ <b>Accounts Failed:</b></td><td>' + processSummary.get('Account_Failed') + '</td></tr>' +
-        '<tr><td>🧾 <b>Case Roles Deleted:</b></td><td>' + processSummary.get('CaseRole_Deleted') + '</td></tr>' +
-        '<tr><td>⚠️ <b>Case Roles Failed:</b></td><td>' + processSummary.get('CaseRole_Failed') + '</td></tr>' +
-        '<tr><td>🧾 <b>Payees Deleted:</b></td><td>' + processSummary.get('Payee_Deleted') + '</td></tr>' +
-        '<tr><td>⚠️ <b>Payees Failed:</b></td><td>' + processSummary.get('Payee_Failed') + '</td></tr>' +
-        '</table></div><br/>';
-
-        // ⚠️ Failed Records Table
-        if (!failedRecords.isEmpty()) {
-            summaryHtml +=
-            '<h4 style="color:#E67E22; margin-bottom: 5px;">⚠️ Failed Deletion Record Details</h4>' +
-            '<div style="border:1px solid #FFD700; padding:10px; background-color:#FFFACD;">' +
-            '<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; width:100%;">' +
-            '<tr style="background-color:#F2F3F4;">' +
-            '<th align="left">Object Type</th>' +
-            '<th align="left">Record Id</th>' +
-            '<th align="left">Name</th>' +
-            '<th align="left">Error Message</th>' +
-            '</tr>';
-
-            for (WrapperError err : failedRecords) {
-                summaryHtml += '<tr>' +
-                '<td>' + err.objectType + '</td>' +
-                '<td>' + (err.recordId != null ? err.recordId : '-') + '</td>' +
-                '<td>' + (err.name != null ? err.name : '-') + '</td>' +
-                '<td style="color:red;">' + err.errorMsg + '</td>' +
-                '</tr>';
-            }
-            summaryHtml += '</table></div><br/>';
-        } else {
-            emailHtmlBody = emailHtmlBody.replaceAll(
-                '<tr><td>✅ <b>Accounts Inserted:</b></td><td>\\d+</td></tr>',
-                '<tr><td>✅ <b>Accounts Inserted:</b></td><td>0</td></tr>'
-            );
-
-            emailHtmlBody = emailHtmlBody.replaceAll(
-                '<tr><td>✅ <b>Case Roles Inserted:</b></td><td>\\d+</td></tr>',
-                '<tr><td>✅ <b>Case Roles Inserted:</b></td><td>0</td></tr>'
-            );
-
-            emailHtmlBody = emailHtmlBody.replaceAll(
-                '<tr><td>✅ <b>Payees Created:</b></td><td>\\d+</td></tr>',
-                '<tr><td>✅ <b>Payees Created:</b></td><td>0</td></tr>'
-            );
-
-            System.debug('Final HTML: ' + emailHtmlBody);
-
-            summaryHtml = '<h3 style="color:#27AE60;">The transaction has been fully reverted without any errors.</h3>' + emailHtmlBody;
-        }
-
-        String userEmail = [SELECT Email FROM User WHERE Id = :UserInfo.getUserId() LIMIT 1].Email;
-
-        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        mail.setToAddresses(new String[]{ userEmail });
-        mail.setSubject('Apex Batch Job Completed - Delete Payee Batch Summary Report');
-
-        mail.setHtmlBody(summaryHtml);
-        mail.setCharset('UTF-8');
-        Messaging.sendEmail(new List<Messaging.SingleEmailMessage>{ mail });
-
-        System.debug(mail);
         
-        Messaging.SendEmailResult[] results = Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+        if (failedRecordsDelete.isEmpty()) {
+            reverted = true;
+        }
         
-        if (results != null && results.size() > 0) {
-            if (results[0].isSuccess()) {
-                System.debug('Email sent successfully.');
-            } else {
-                System.debug('Email failed: ' + results[0].getErrors()[0].getMessage());
-            }
+        if(reverted == false && batchName == 'RevertPayeeBatch'){
+            reverted = false;
+        }
+        
+        Id jobId = BC.getJobId();
+        
+        // 2. Query the AsyncApexJob record to check ExtendedStatus
+        AsyncApexJob job = [
+            SELECT Id, ExtendedStatus, NumberOfErrors
+            FROM AsyncApexJob
+            WHERE Id = :jobId
+            LIMIT 1
+        ];
+        if (job.ExtendedStatus != null) {
+            reverted = false;
+            this.allErrorMessages += 'Apex Job : ' + job.ExtendedStatus;
+            this.batchError = true;
         }
 
-    }
 
-    // Wrapper for failed record details
-    public class WrapperError {
-        public Id recordId;
-        public String name;
-        public String errorMsg;
-        public String objectType;
-
-        public WrapperError(Id recordId, String name, String errorMsg, String objectType) {
-            this.recordId = recordId;
-            this.name = name;
-            this.errorMsg = errorMsg;
-            this.objectType = objectType;
-        }
+        // Send summary email using BatchEmailService
+        BatchEmailService.sendBatchSummaryEmail(
+            caseId,
+            importType,
+            insertedAccounts,
+            insertedCaseRoles,
+            insertedPayees,
+            successCountPayee,
+            failureCountPayee,
+            batchError,
+            batchRunCount,
+            numberOfImportRecordsInserted,
+            allErrorMessages,
+            creationErrorTable,
+            updateerrorTable,
+            processSummary,
+            'DeletePayeeBatch',
+            reverted,
+            failedRecordsDelete,
+            failedRecordsRevert
+        );
     }
 }
