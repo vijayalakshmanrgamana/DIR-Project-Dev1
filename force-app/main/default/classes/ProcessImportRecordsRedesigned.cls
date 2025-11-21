@@ -30,7 +30,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
     
     // Update the Case Issue Records
     Map<Id, Decimal> caseIssueAmountUtilizedFromPayee = new Map<Id, Decimal>();
-        
+    
     // To Store account, case Role, Payee Ids and imports Record for Delete
     global Integer batchRunCount = 0;
     global Set<Id> accDeleteIds = new Set<Id>();
@@ -56,9 +56,6 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
         
         Integer caseIssueCount = (Integer) agr[0].get('caseIssueCount');
         isLinkedToAllCaseIssue = (caseIssueCount == caseIssueIds.size());
-        System.debug('Total Case Issue Count : ' + caseIssueCount);
-        System.debug('Select Case Issue Count : ' + caseIssueIds.size());
-        System.debug('The global Field isLinkedToAllCaseIssue Value : '+ isLinkedToAllCaseIssue);
         
         
         return Database.getQueryLocator([
@@ -79,6 +76,11 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
             System.debug('Batch stop flag is set. Skipping remaining records.');
             return;
         }
+        Integer insertedAccount = 0;
+        Integer insertedCaseRole = 0;
+        Integer insertedPayee = 0;
+        Integer successPayee = 0;
+        
         batchRunCount ++;
         List<Import__c> duplicateEmployees     = new List<Import__c>();
         List<Account> accsToUpload             = new List<Account>();
@@ -138,7 +140,9 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
             }
         } catch (Exception e) {
             batchError = true;
-            errorMessages.add('Error building records: ' + e.getMessage());
+            String trace = e.getStackTraceString();
+            String firstLine = trace.split('\n')[0];
+            errorMessages.add('General Error : ' + e.getMessage() + ' | Location: ' + firstLine + '\n');
         }
         
         Savepoint sp = Database.setSavepoint(); // Set rollback point at start
@@ -151,6 +155,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                              + ' ' + duplicateEmployees);
                 
                 // 1. Call the static executeLogic method directly and store the returned result object.
+                ProcessDuplicatePayeesService.importType = importType;
                 ProcessDuplicatePayeesService.PayeeProcessingResult processorResult = 
                     ProcessDuplicatePayeesService.executeLogic(
                         duplicateEmployees,
@@ -162,7 +167,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                 List<Payee__c> payeesToUpdate = processorResult.updatePayeeRecords;
                 Map<Id, Import__c> payeeToImportMap = processorResult.payeeToImportMap;
                 List<Payee__c> oldPayeeRecords = processorResult.oldPayeeRecords;
-                
+               
                 
                 // 3. Perform DML operation with the results
                 if (!payeesToUpdate.isEmpty()) {
@@ -174,7 +179,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                             Payee__c payee = payeesToUpdate[i];
                             
                             if (results[i].isSuccess()) {
-                                successCountPayee++;
+                                successPayee++;
                                 Import__c failedImport = payeeToImportMap.get(payee.Id); // Use the retrieved map
                             } else {
                                 batchError = true;
@@ -226,16 +231,31 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                             String serializedData = JSON.serialize(payeeRevertDataMap);
                             
                             ContentVersion cv = new ContentVersion();
-                            cv.Title = 'PayeeRevertData'+uniqueKey+'BatchCount'+batchRunCount;
-                            cv.PathOnClient = 'PayeeRevertData'+uniqueKey+'BatchCount'+batchRunCount+'.json';
+                            cv.Title = 'PayeeRevertData' + uniqueKey + 'BatchCount' + batchRunCount;
+                            cv.PathOnClient = 'PayeeRevertData' + uniqueKey + 'BatchCount' + batchRunCount + '.json';
                             cv.VersionData = Blob.valueOf(serializedData);
-                            insert cv;
-                            insertPayeeFiles ++;
                             
-                        }
+                            List<ContentVersion> cvList = new List<ContentVersion>{ cv };
+                            List<Database.SaveResult> cvResults = Database.insert(cvList, false);
+                            
+                            for (Integer i = 0; i < cvResults.size(); i++) {
+                                if (cvResults[i].isSuccess()) {
+                                    insertPayeeFiles++;
+                                } else {
+                                    for (Database.Error err : cvResults[i].getErrors()) {
+                                        batchError = true;
+                                    }
+                                }
+                            }
+
+                            
+                        } 
                     } catch (Exception e) {
                         batchError = true;
-                        errorMessages.add('Error building payees Update records: ' + e.getMessage());
+                        String trace = e.getStackTraceString();
+                        String firstLine = trace.split('\n')[0];
+                        
+                        errorMessages.add('General Error : ' + e.getMessage() + ' | Location: ' + firstLine + '\n');
                         System.debug('### DML Error: ' + e.getMessage());
                     }
                 }
@@ -251,7 +271,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
             List<Database.SaveResult> insertAccountResults = Database.insert(accsToUpload, false);
             for (Integer i = 0; i < insertAccountResults.size(); i++) {
                 if (insertAccountResults[i].isSuccess()) {
-                    insertedAccounts++;
+                    insertedAccount++;
                     accDeleteIds.add(insertAccountResults[i].getId());
                 } else {
                     for (Database.Error err : insertAccountResults[i].getErrors()) {
@@ -277,7 +297,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
             for (Integer i = 0; i < insertCaseRoleResults.size(); i++) {
                 if (insertCaseRoleResults[i].isSuccess()) {
                     caseRoleDeleteIds.add(insertCaseRoleResults[i].getId());
-                    insertedCaseRoles++;
+                    insertedCaseRole++;
                 } else {
                     Database.Error error = insertCaseRoleResults[i].getErrors()[0];
                     setWrapperInfo(accsToUpload[i], 'Case Role : ' + error.getMessage());
@@ -344,6 +364,8 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                         associationData.factor                = String.isEmpty(accP.factor) ? 0 : toDecimal(accP.factor);
                         associationData.citationForm          = ci.Violation_Type__r.Violation_Type__c;
                         associationData.violationTypeName     = ci.Violation_Type__r.Violation_Type_Name__c;
+                        associationData.isPartial = importType == 'Form_40_Partial' ? true :false; 
+
                         
                         Decimal NWBreakdown   = String.isEmpty(accP.netWages) ? 0 : toDecimal(accP.netWages) / caseIssueList.Size();
                         Decimal TNWBreakdown  = String.isEmpty(accP.wageAsssesment) ? 0 : toDecimal(accP.wageAsssesment) / caseIssueList.Size();
@@ -367,11 +389,11 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                             calculateAmountUtilized = wageBalanceDue;
                         }
                         else if (importType == 'Form_40_Partial') {
-                            calculateAmountUtilized = amountReserved;
+                            calculateAmountUtilized = amountReserved + amountUtilizedFromPayee;
                         }
                         else if (importType == 'Corrective_Form_40') {
                             calculateAmountUtilized = amountUtilizedFromPayee;
-                        }
+                        } 
                         
                         caseIssueAmountUtilizedFromPayee.put(associationData.caseIssueId, calculateAmountUtilized);
                         /*
@@ -418,7 +440,7 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             for (Integer i = 0; i < insertPayeeResults.size(); i++) {
                 if (insertPayeeResults[i].isSuccess()) {
                     payeeDeleteIds.add(insertPayeeResults[i].getId());
-                    insertedPayees++;
+                    insertedPayee++;
                 } else {
                     Database.Error error = insertPayeeResults[i].getErrors()[0];
                     System.debug('Insert Payee Record Is failed: ' + error.getMessage());
@@ -428,19 +450,23 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             }
             
             System.debug(insertedPayees + ' Payess records Inserted.');
-            If(batchError == true){
-                Database.rollback(sp);
-            }
             
         } catch (Exception e) {
             batchError = true;
-            Database.rollback(sp);
-            errorMessages.add('Rollback performed due to error: ' + e.getMessage());
+            String trace = e.getStackTraceString();
+            String firstLine = trace.split('\n')[0];
+            errorMessages.add('General Error : ' + e.getMessage() + ' | Location: ' + firstLine + '\n');
             System.debug('Batch chunk rolled back due to error: ' + e.getMessage());
         }
         
         If(batchError == true){
             Database.rollback(sp);
+        }
+        else{
+            	insertedAccounts +=insertedAccount;
+                insertedCaseRoles += insertedCaseRole;
+                insertedPayees += insertedPayee;
+                successCountPayee += successPayee;
         }
     }
     
@@ -468,20 +494,20 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             FROM ContentDocument
             WHERE Id IN :contentDocumentIds
         ];
-                if (batchError == false) {
-        List<Database.DeleteResult> deleteResults = Database.delete(docsToDelete, false);
-        
-        for (Integer i = 0; i < deleteResults.size(); i++) {
-            if (deleteResults[i].isSuccess()) {
-                System.debug('Deleted ContentDocument: ' + docsToDelete[i].Id);
-            } else {
-                Database.Error err = deleteResults[i].getErrors()[0];
-                System.debug('Failed to delete ContentDocument ' + docsToDelete[i].Id + ' : ' + err.getMessage());
-                errorMessages.add('Failed to delete ContentDocument ' + docsToDelete[i].Id + ' : ' + err.getMessage());
-                batchError = true;
+        if (batchError == false) {
+            List<Database.DeleteResult> deleteResults = Database.delete(docsToDelete, false);
+            
+            for (Integer i = 0; i < deleteResults.size(); i++) {
+                if (deleteResults[i].isSuccess()) {
+                    System.debug('Deleted ContentDocument: ' + docsToDelete[i].Id);
+                } else {
+                    Database.Error err = deleteResults[i].getErrors()[0];
+                    System.debug('Failed to delete ContentDocument ' + docsToDelete[i].Id + ' : ' + err.getMessage());
+                    errorMessages.add('Failed to delete ContentDocument ' + docsToDelete[i].Id + ' : ' + err.getMessage());
+                    batchError = true;
+                }
             }
         }
-                }
         
         
         String nonDMLErrorMessages = '';
@@ -501,17 +527,12 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             batchError = true;
         }
         
-        If(batchError == true){
-            NumberofImportRecordsInserted = (batchRunCount - 1) * 200;
-            insertedAccounts   = (batchRunCount - 1) * 200;
-            insertedCaseRoles  = (batchRunCount - 1) * 200;
-            insertedPayees     = (batchRunCount - 1) * 200;
-            successCountPayee  = (batchRunCount - 1) * 200;
-        }
-        
         // --- Prepare Case Issue Updates ---
+
+        
         List<DIR_Violation__c> caseIssueUpdate = new List<DIR_Violation__c>();
         
+        /*
         for (Id caseIssue : caseIssueAmountUtilizedFromPayee.keySet()) {
             DIR_Violation__c caseIssueSingle = new DIR_Violation__c();
             caseIssueSingle.Id = caseIssue;
@@ -522,7 +543,42 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             
             caseIssueUpdate.add(caseIssueSingle);
         }
+        */
         
+         List<DIR_Violation__c> caseIssueList = [
+            SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, Amount_Utilized_from_Payee__c,
+            Violation_Type__r.Violation_Type_Name__c, Violation_Type__r.Violation_Type__c, Post_Judgment_Interest_for_Wages__c, Post_Citation_Interest_for_Wages__c
+            FROM DIR_Violation__c
+            WHERE Id IN :caseIssueIds
+        ];
+        
+         for (DIR_Violation__c ci : caseIssueList) {
+            DIR_Violation__c caseIssueSingle = new DIR_Violation__c();
+             
+             Decimal wageBalanceDue = (ci.Wage_Balance_Due__c != null) ? ci.Wage_Balance_Due__c : 0;
+             Decimal amountReserved = (ci.Amount_Reserved__c != null) ? ci.Amount_Reserved__c : 0;
+             Decimal amountUtilizedFromPayee = (ci.Amount_Utilized_from_Payee__c != null) ? ci.Amount_Utilized_from_Payee__c : 0;
+             
+             Decimal calculateAmountUtilized = 0;
+             
+             
+             if (importType == 'Form_40') {
+                 calculateAmountUtilized = wageBalanceDue;
+             }
+             else if (importType == 'Form_40_Partial') {
+                 calculateAmountUtilized = amountReserved + amountUtilizedFromPayee;
+             }
+             else if (importType == 'Corrective_Form_40') {
+                 calculateAmountUtilized = amountUtilizedFromPayee;
+             } 
+             
+            caseIssueSingle.Id = ci.Id;
+            if (calculateAmountUtilized != null) {
+                caseIssueSingle.Amount_Utilized_from_Payee__c = calculateAmountUtilized.setScale(2, RoundingMode.HALF_UP);
+            }
+            
+            caseIssueUpdate.add(caseIssueSingle);
+        }
         
         // --- Update Case Issues ---
         if (batchError == false) {
@@ -627,8 +683,11 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
                 delete csvRecords;
             } catch (DmlException e) {
                 batchError = true;
+                String trace = e.getStackTraceString();
+                String firstLine = trace.split('\n')[0];
+                
+                errorMessages.add('General Error : ' + e.getMessage() + ' | Location: ' + firstLine + '\n');
                 System.debug('Error deleting Import__c records: ' + e.getMessage());
-                errorMessages.add('Error deleting Import__c records: ' + e.getMessage());
             }
         }
         String allErrorMessages = '';
@@ -645,9 +704,8 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
         
         boolean apexBatchCall = false;
         List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
+        Map<String, Integer> processSummary = new Map<String, Integer>();
         if(batchRunCount == 1 || batchError == false){
-            
-            Map<String, Integer> processSummary = new Map<String, Integer>();
             Boolean reverted = false;
             BatchEmailService.sendBatchSummaryEmail(
                 caseId,
@@ -672,7 +730,7 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             apexBatchCall = true;
         }
         
-       
+        
         if(batchError == true && batchRunCount > 1 && duplicatePayees == false){
             Database.executeBatch(
                 new DeletePayeeBatch(
@@ -694,7 +752,8 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
                     updateerrorTable,
                     false,
                     'ProcessImportRecordsRedesigned',
-                    failedRecords
+                    failedRecords,
+                    processSummary
                 ),
                 200
             );
@@ -726,16 +785,14 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             );  
             apexBatchCall = true;
         }
-        if(!isLinkedToAllCaseIssue){
-             Set<Id> caseIds = new Set<Id>();
-        caseIds.add(Id.valueof(caseId));
-        Database.executeBatch(new IC_RollUpPayeeBatch(caseIds));
-        }
-       
+        
+            Set<Id> caseIds = new Set<Id>();
+            caseIds.add(Id.valueof(caseId));
+            Database.executeBatch(new IC_RollUpPayeeBatch(caseIds));
+        
+        
         
         if(!apexBatchCall){
-                        
-            Map<String, Integer> processSummary = new Map<String, Integer>();
             Boolean reverted = false;
             BatchEmailService.sendBatchSummaryEmail(
                 caseId,

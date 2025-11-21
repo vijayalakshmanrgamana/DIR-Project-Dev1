@@ -31,7 +31,7 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
             'Payee_Failed' => 0
             };
                 private List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
-                private List<BatchEmailService.WrapperError> failedRecordsRevert = new List<BatchEmailService.WrapperError>();
+    private List<BatchEmailService.WrapperError> failedRecordsRevert = new List<BatchEmailService.WrapperError>();
     
     
     public RevertPayeeBatch(
@@ -183,8 +183,16 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
                     }
                 }
             }
-        } catch (Exception ex) {
-            this.allErrorMessages += 'Error :' + ex.getMessage();
+        }         catch (Exception ex) {
+            String trace = ex.getStackTraceString();
+            String firstLine = trace.split('\n')[0];
+            
+            this.allErrorMessages += 
+                'General Error : ' + ex.getMessage() +
+                ' | Location: ' + firstLine + '\n';
+            
+            this.batchError = true;
+            reverted = false;
         }
         
         // --- CORE CHANGE: Delete the ContentVersion record now and collect ContentDocumentId ---
@@ -193,10 +201,16 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
                 delete new ContentDocument(
                     Id = currentCv.ContentDocumentId
                 );
-            } catch (Exception e) {
-                System.debug('Error deleting file ' + currentCv.Title + ': ' + e.getMessage());
-                this.allErrorMessages += 'Error deleting file (' + currentCv.Title + '): ' + e.getMessage() + '\n';
+            }         catch (Exception ex) {
+                String trace = ex.getStackTraceString();
+                String firstLine = trace.split('\n')[0];
+                
+                this.allErrorMessages += 
+                    'General Error : ' + ex.getMessage() +
+                    ' | Location: ' + firstLine + '\n';
+                
                 this.batchError = true;
+                reverted = false;
             }
         }
         
@@ -218,7 +232,11 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
                 // Log the deserialization error associated with the file
                 System.debug('Error deserializing ContentVersion data from file ' + cv.Title + ': ' + e.getMessage());
                 this.batchError = true;
-                this.allErrorMessages += 'Error deserializing Payee Revert Data from file (' + cv.Title + '): ' + e.getMessage() + '\n';
+                String trace = e.getStackTraceString();
+                String firstLine = trace.split('\n')[0];
+                
+                this.allErrorMessages += 'Error deserializing Payee Revert Data from file (' + cv.Title + '): ' + e.getMessage() +
+                    ' | Location: ' + firstLine + '\n';
             }
         } else { 
             System.debug('ContentVersion file is empty: ' + cv.Title);
@@ -295,7 +313,8 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
                     updateerrorTable,
                     reverted,
                     'RevertPayeeBatch',
-                    failedRecordsRevert
+                    failedRecordsRevert,
+                    processSummary
                 ),
                 200
             );

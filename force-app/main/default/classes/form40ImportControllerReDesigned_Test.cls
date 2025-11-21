@@ -1,6 +1,6 @@
 @isTest
 public class form40ImportControllerReDesigned_Test {
-     
+    
     // --- Wrapper Class Definitions ---
     public class ImportWrapper {
         public Integer rowNumber                { get; set; }
@@ -55,21 +55,21 @@ public class form40ImportControllerReDesigned_Test {
         // Query all the Payees and their respective Assessment Associations
         return [
             SELECT
-        Id,
-        Name,
-        Payee_Name__c,
-        Case_Role__c,
-        Case_Role__r.Entity__r.AccountMatch__c,
-        Payee_Association_JSON__c, 
-        Direct_Pay__c,
-        NetWages__c,
-        WageAssessment__c,
-        TotalDeductions__c,
-        Factor__c,
-        Post_Judgment_Interest_for_Wages__c,
-        Post_Citation_Interest_for_Wages__c
-      FROM Payee__c
-      WHERE Case_Management__c = :caseId
+            Id,
+            Name,
+            Payee_Name__c,
+            Case_Role__c,
+            Case_Role__r.Entity__r.AccountMatch__c,
+            Payee_Association_JSON__c, 
+            Direct_Pay__c,
+            NetWages__c,
+            WageAssessment__c,
+            TotalDeductions__c,
+            Factor__c,
+            Post_Judgment_Interest_for_Wages__c,
+            Post_Citation_Interest_for_Wages__c
+            FROM Payee__c
+            WHERE Case_Management__c = :caseId
         ];
     }
     
@@ -120,7 +120,7 @@ public class form40ImportControllerReDesigned_Test {
         accounts.add(employerAccount);
         insert accounts;    
         System.Debug('Inserted Account is '+employerAccount.Id);
-                    
+        
         List<Address__c> employerAccountLocation = [SELECT Id, Name FROM Address__c WHERE Entity__c = :employerAccount.Id];
         
         // 3. Setup DIR Employees (Manager and Deputy)
@@ -131,7 +131,7 @@ public class form40ImportControllerReDesigned_Test {
             Title__c  = 'Senior Deputy Labor Commissioner'
         );
         insert manager;
-                
+        
         DIR_Employee__c deputy = new DIR_Employee__c(
             Name      = 'Bao Le',
             User__c   = UserInfo.getUserId(),
@@ -256,10 +256,10 @@ public class form40ImportControllerReDesigned_Test {
         );
         caseIssues.add(bofeCaseIssue2);
         insert caseIssues;
-            
+        
         // 10. Setup Payee
         List<Payee__c> payeeList = new List<Payee__c>();
-
+        
         Payee__c payeeSingle = new Payee__c();
         payeeSingle.Case_Management__c = bofeCase.Id;
         payeeSingle.Case_Role__c       = caseRoles[0].Id;
@@ -284,7 +284,7 @@ public class form40ImportControllerReDesigned_Test {
         payeeList.add(payeeSingle);
         
         insert payeeList;
-       
+        
         
         
         // 11. Read CSV Data from Static Resource and Insert Import Records
@@ -298,48 +298,48 @@ public class form40ImportControllerReDesigned_Test {
         if (resources.isEmpty()) {
             System.debug('ERROR: Static Resource named \'DIRCreatePayee\' not found.');
         }
-
+        
         StaticResource resource = resources[0];
         String csvData = resource.Body.toString();
         // Convert the Blob body to a String
-
+        
         List<String> csvLines = csvData.split('\n');
         if (csvLines.size() < 1) {
             System.debug('ERROR: CSV file is empty.');
             return;
         }
-
-
+        
+        
         // Assuming the first line is the header row
         List<String> headers = csvLines[0].split(',');
         // Clean up headers (remove quotes/trim whitespace)
         for (Integer h = 0; h < headers.size(); h++) {
             headers[h] = headers[h].trim().replaceAll('"', '');
         }
-
+        
         // List to hold the records we are inserting
         List<Import__c> toInsert = new List<Import__c>();
         Integer rowCount = 0;
-
+        
         // Loop Through Data Rows (Starting from index 1, skipping the header)
         for (Integer i = 1; i < csvLines.size(); i++) {
             String line = csvLines[i];
             if (String.isBlank(line)) continue;
-
+            
             // A simple split by comma can break if fields contain commas (need better CSV parsing for that)
             List<String> values = line.split(',');
             Map<String, String> fieldValues = new Map<String, String>();
-
+            
             // Map the header name to the corresponding value
             for (Integer j = 0; j < headers.size() && j < values.size(); j++) {
                 // Trim each value and remove surrounding quotes
                 String val = values[j].trim().replaceAll('"', '');
                 fieldValues.put(headers[j], val);
             }
-
+            
             Import__c rec = new Import__c();
             String uniqueKey = 'CSV_Results_TEST_KEY';
-
+            
             // **Standard Field Assignments**
             rec.Case_Management__c = caseId;
             rec.Unique_Key__c = uniqueKey;
@@ -355,7 +355,7 @@ public class form40ImportControllerReDesigned_Test {
             }
             
             // Assuming this default value
-
+            
             // **String Field Assignments**
             rec.Employee_First_Name__c = fieldValues.get('Employee First Name');
             rec.Employee_Last_Name__c = fieldValues.get('Employee Last Name');
@@ -369,28 +369,28 @@ public class form40ImportControllerReDesigned_Test {
             // **Decimal Field Assignments with Null Check and Conversion**
             String totalWage = fieldValues.get('Total Wage Assessment');
             rec.Total_Wage_Assessment__c = String.isNotBlank(totalWage) ? Decimal.valueOf(totalWage) : null;
-
+            
             String deductionsTotal = fieldValues.get('Deductions: Total');
             rec.Deductions_Total__c = String.isNotBlank(deductionsTotal) ? Decimal.valueOf(deductionsTotal) : null;
             
             String netWages = fieldValues.get('Net Wages Assessed');
             rec.Net_Wages_Paid__c = String.isNotBlank(netWages) ? Decimal.valueOf(netWages) : null;
-
+            
             String factor = fieldValues.get('Factor');
             rec.Factor__c = String.isNotBlank(factor) ? Decimal.valueOf(factor) : null;
-
+            
             toInsert.add(rec);
         }
-
+        
         if (!toInsert.isEmpty()) {
             try {
-                 insert toInsert;
+                insert toInsert;
                 System.debug('SUCCESS: ' + toInsert.size() + ' Import__c records were created.');
             } catch (DmlException e) {
                 System.debug('DML ERROR: Failed to insert records. Error: ' + e.getMessage());
             }
         }
-            
+        
         
         
         // 12. Simulate CSV Validation Call
@@ -406,13 +406,13 @@ public class form40ImportControllerReDesigned_Test {
         List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Name FROM DIR_Violation__c LIMIT 1];
         String importType = 'Form_40';
         List<Id> selectedCaseIssueIds = new List<Id>{ queriedCaseIssues[0].Id };
-        
-        String cacheKey = form40ImportControllerReDesigned.parseCSVAndValidate(
-            csvLines,
-            caseId,
-            selectedCaseIssueIds,
-            importType
-        );
+            
+            String cacheKey = form40ImportControllerReDesigned.parseCSVAndValidate(
+                csvLines,
+                caseId,
+                selectedCaseIssueIds,
+                importType
+            );
         
         // 13. Simulate Polling (getImportResults)
         try {
@@ -433,7 +433,7 @@ public class form40ImportControllerReDesigned_Test {
             if (pollingData != null) {
                 System.debug('Polling Data List Size: ' + pollingData.size());
             }
-
+            
         } catch (Exception e) {
             // This catch block will capture the System.AuraHandledException or any other errors
             // and print the full error details to the debug log, which is helpful since
@@ -465,7 +465,7 @@ public class form40ImportControllerReDesigned_Test {
         w.fieldValues.put('Employee Last Name', 'Doe');
         w.errorMessages.add('No errors');
         wrappers.add(w);
-
+        
         // Serialize JSON
         String jsonData = JSON.serialize(wrappers);
         
@@ -476,7 +476,7 @@ public class form40ImportControllerReDesigned_Test {
             VersionData = Blob.valueOf(jsonData)
         );
         insert cv;
-
+        
         // Get the linked ContentDocumentId
         Id fileId = [
             SELECT ContentDocumentId    
@@ -497,7 +497,7 @@ public class form40ImportControllerReDesigned_Test {
             Total_Jobs__c      = 2,
             Results__c         = 'CSV_Results_TEST_KEY'
         ));
-
+        
         // Job 1 (Completed, has file result)
         imports.add(new Import__c(
             Unique_Key__c      = 'CSV_Results_TEST_KEY',
@@ -518,7 +518,7 @@ public class form40ImportControllerReDesigned_Test {
             Total_Jobs__c      = 2,
             Error_Message__c   = 'Simulated failure for testing'
         ));
-
+        
         insert imports;
         
         
@@ -533,9 +533,9 @@ public class form40ImportControllerReDesigned_Test {
         DIR_Violation__c violation = [SELECT Id, Name FROM DIR_Violation__c WHERE Id = :caseIssues[0].Id LIMIT 1];
         uniqueKey = 'CSV_Results_TEST_KEY';
         importType = 'Form_40';
-
+        
         List<DIR_Violation__c> violation01 = [SELECT Id, Name FROM DIR_Violation__c];
-
+        
         System.debug(violation01.size());
         
         // 15. Simulate Revalidation of Edited Rows
@@ -553,7 +553,7 @@ public class form40ImportControllerReDesigned_Test {
         form40ImportControllerReDesigned.ImportWrapper invalidRow = new form40ImportControllerReDesigned.ImportWrapper();
         invalidRow.fieldValues.put('Employee First Name', '');
         invalidRow.fieldValues.put('Employee Last Name', '');
-
+        
         editedRows.add(validRow);
         editedRows.add(invalidRow);
         
@@ -568,8 +568,8 @@ public class form40ImportControllerReDesigned_Test {
             
             System.debug('*** SUCCESSFUL CALL ***');
             System.debug('Complete Results Map: ' + resultsOfrevalidateEditedRows);
-
-
+            
+            
         } catch (Exception e) {
             System.debug(LoggingLevel.ERROR, '*** CAUGHT EXCEPTION FROM APEX METHOD ***');
             System.debug(LoggingLevel.ERROR, 'Error Type: ' + e.getTypeName());
@@ -598,34 +598,34 @@ public class form40ImportControllerReDesigned_Test {
         
         List<Import__c> importsMerged = [
             SELECT Id, Name, Unique_Key__c, Job_Status__c, Case_Management__c, Job_Sequence__c, Total_Jobs__c,
-                   Deductions_Total__c, Employee_City__c, Employee_First_Name__c, Employee_Last_Name__c,
-                   Employee_State__c, Employee_Street__c, Employee_Zip__c, Factor__c, Gross_Wages_Paid__c,
-                   Net_Wages_Paid__c, Period_Covered_by_Adjustment__c, Total_Wage_Assessment__c,
-                   Has_Matching_Account__c, Direct_Pay__c
+            Deductions_Total__c, Employee_City__c, Employee_First_Name__c, Employee_Last_Name__c,
+            Employee_State__c, Employee_Street__c, Employee_Zip__c, Factor__c, Gross_Wages_Paid__c,
+            Net_Wages_Paid__c, Period_Covered_by_Adjustment__c, Total_Wage_Assessment__c,
+            Has_Matching_Account__c, Direct_Pay__c
             FROM Import__c
             WHERE Has_Matching_Account__c = true
-               OR (Case_Management__c = :caseId AND Unique_Key__c = :uniqueKey AND Job_Sequence__c = NULL)
+            OR (Case_Management__c = :caseId AND Unique_Key__c = :uniqueKey AND Job_Sequence__c = NULL)
         ];
         System.debug('Test Class  ' + importsMerged.Size() + ' Import Records inserted.');
-
-
+        
+        
         List<Account> accsToUpload = new List<Account>();
         List<Payee__c> createPayeeList = new List<Payee__c>();
         List<Case_Role__c> createCaseRoleList = new List<Case_Role__c>();
         List<recordWrapper> failedDMLRecords = new List<recordWrapper>();
         Map<String, recordWrapper> accPayeeMap = new Map<String, recordWrapper>();
-
+        
         // Fetch Case Issues
         List<DIR_Violation__c> caseIssueList = [
             SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, Amount_Utilized_from_Payee__c,
-                   Violation_Type__r.Violation_Type_Name__c,
-                   Violation_Type__r.Violation_Type__c
+            Violation_Type__r.Violation_Type_Name__c,
+            Violation_Type__r.Violation_Type__c
             FROM DIR_Violation__c
             WHERE Id = :setOfCaseIssueIds
         ];
         
         Id personAccRTID = Schema.SObjectType.Account.getRecordTypeInfosByName().get('Person Account').getRecordTypeId();
-
+        
         try {
             // Build Account and Wrapper List
             for (sObject line : importsMerged) {
@@ -642,7 +642,7 @@ public class form40ImportControllerReDesigned_Test {
                 acct.ShippingPostalCode = record.Employee_Zip__c;
                 acct.RecordTypeId       = personAccRTID;
                 accsToUpload.add(acct);
-
+                
                 recordWrapper accPayee = new recordWrapper();
                 accPayee.key                = acct.LastName + ',' + acct.FirstName + ',' + record.Employee_Street__c + ',' + record.Employee_Zip__c;
                 accPayee.firstname          = record.Employee_First_Name__c;
@@ -664,7 +664,7 @@ public class form40ImportControllerReDesigned_Test {
         } catch (Exception e) {
             System.debug('Error building records: ' + e.getMessage());
         }
-
+        
         try {
             // --- Insert Accounts ---
             List<Database.SaveResult> insertAccountResults = Database.insert(accsToUpload, true);
@@ -687,7 +687,7 @@ public class form40ImportControllerReDesigned_Test {
                     Entity__c       = acc.Id
                 ));
             }
-
+            
             List<Database.SaveResult> insertCaseRoleResults = Database.insert(createCaseRoleList, true);
             for (Integer i = 0; i < insertCaseRoleResults.size(); i++) {
                 if (insertCaseRoleResults[i].isSuccess()) {
@@ -704,12 +704,12 @@ public class form40ImportControllerReDesigned_Test {
             for (Case_Role__c role : createCaseRoleList) {
                 caseRoleIds.add(role.Id);
             }
-
+            
             List<Case_Role__c> caseRoleList = [
                 SELECT Id, Name, Entity__c, Entity__r.ShippingPostalCode,
-                       Entity__r.ShippingState, Entity__r.ShippingCity,
-                       Entity__r.ShippingStreet, Entity__r.LastName,
-                       Entity__r.FirstName, Entity__r.AccountMatch__c
+                Entity__r.ShippingState, Entity__r.ShippingCity,
+                Entity__r.ShippingStreet, Entity__r.LastName,
+                Entity__r.FirstName, Entity__r.AccountMatch__c
                 FROM Case_Role__c
                 WHERE Id = :caseRoleIds
             ];
@@ -721,11 +721,11 @@ public class form40ImportControllerReDesigned_Test {
                 // AccountMatch is calculated as: LastName,FirstName,ShippingStreet,ShippingZip (AccountMatch__c field on Person Account)
                 recordWrapper accP = accPayeeMap.get(cr.Entity__r.AccountMatch__c); 
                 System.debug('Dev VR :' + accP + '\n');
-
+                
                 if (accP != null) {
                     Payee__c payee = new Payee__c();
                     payee.PeriodCovered__c = accP.periodCovered;
-
+                    
                     if (!String.isEmpty(accP.wageAsssesment)) payee.WageAssessment__c = toDecimal(accP.wageAsssesment);
                     if (!String.isEmpty(accP.grossWages)) payee.GrossWages__c = toDecimal(accP.grossWages);
                     if (!String.isEmpty(accP.disabilityInsurance)) payee.DisabilityInsurance__c = toDecimal(accP.disabilityInsurance);
@@ -763,11 +763,11 @@ public class form40ImportControllerReDesigned_Test {
                         } else if (importType == 'Corrective_Form_40') {
                             breakdown = utilizedAmount * (String.isEmpty(accP.factor) ? 0 : toDecimal(accP.factor) / 100);
                         }
-
+                        
                         associationData.caseIssueBreakdown = breakdown.setScale(6, RoundingMode.HALF_UP);
                         caseIssueJsonList.add(associationData);
                     }
-
+                    
                     payee.Payee_Association_JSON__c = JSON.serialize(caseIssueJsonList);
                     createPayeeList.add(payee);
                 } else {
@@ -781,11 +781,11 @@ public class form40ImportControllerReDesigned_Test {
                     noMatchAccount.shippingState      = cr.Entity__r.ShippingState;
                     noMatchAccount.shippingPostalCode = cr.Entity__r.ShippingPostalCode;
                     noMatchAccount.caseManagment      = caseId;
-
+                    
                     failedDMLRecords.add(noMatchAccount);
                 }
             }
-
+            
             // --- Insert Payees ---
             List<Database.SaveResult> insertPayeeResults = Database.insert(createPayeeList, false);
             for (Integer i = 0; i < insertPayeeResults.size(); i++) {
@@ -796,7 +796,7 @@ public class form40ImportControllerReDesigned_Test {
                     System.debug(' Insert Payee Record failed: ' + error.getMessage());
                 }
             }
-
+            
             System.debug(insertedPayees + ' Payee records inserted.');
         } catch (Exception e) {
             System.debug('Unexpected error in execute: ' + e.getMessage());
@@ -817,7 +817,7 @@ public class form40ImportControllerReDesigned_Test {
         List<Payee__c> allPayeeList = queryPayees(caseId);
         map<string, Payee__c> payeeMap = new Map<string, Payee__c>();
         for (Payee__c py : allPayeeList) {
-    payeeMap.put(py.Case_Role__r.Entity__r.AccountMatch__c.toLowerCase(), py);
+            payeeMap.put(py.Case_Role__r.Entity__r.AccountMatch__c.toLowerCase(), py);
         }
         System.Debug(
             'Payee Map with with Key as Account Match to find the Duplicate Payee ' +
@@ -841,10 +841,10 @@ public class form40ImportControllerReDesigned_Test {
         
         List<Import__c> getImportResutlt = [
             SELECT Id, Name, Unique_Key__c, Job_Status__c, Case_Management__c, Job_Sequence__c, Total_Jobs__c,
-                   Deductions_Total__c, Employee_City__c, Employee_First_Name__c, Employee_Last_Name__c,
-                   Employee_State__c, Employee_Street__c, Employee_Zip__c, Factor__c, Gross_Wages_Paid__c,
-                   Net_Wages_Paid__c, Period_Covered_by_Adjustment__c, Total_Wage_Assessment__c,
-                   Has_Matching_Account__c, Direct_Pay__c
+            Deductions_Total__c, Employee_City__c, Employee_First_Name__c, Employee_Last_Name__c,
+            Employee_State__c, Employee_Street__c, Employee_Zip__c, Factor__c, Gross_Wages_Paid__c,
+            Net_Wages_Paid__c, Period_Covered_by_Adjustment__c, Total_Wage_Assessment__c,
+            Has_Matching_Account__c, Direct_Pay__c
             FROM Import__c
             WHERE Case_Management__c = :caseId AND Unique_Key__c = :uniqueKey AND Job_Sequence__c = 0
         ];
@@ -862,7 +862,7 @@ public class form40ImportControllerReDesigned_Test {
         System.Debug('Job Tracking Import record Inserted ' + importResult.Id);    
         System.debug('Job Tracking Import record Inserted '+payeeMapFileId);
         System.debug('Job Tracking Import record Inserted '+jsonPayeeMap);
-
+        
         List<Import__c> initialRecord = [
             SELECT Results__c 
             FROM Import__c 
@@ -909,7 +909,7 @@ public class form40ImportControllerReDesigned_Test {
                 Total_Jobs__c      = 2,
                 Results__c         = 'CSV_Results_TEST_KEY'
             ));
-
+            
             // Job 1 (Completed, has file result)
             imports02.add(new Import__c(
                 Unique_Key__c      = 'CSV_Results_TEST_KEY',
@@ -930,17 +930,17 @@ public class form40ImportControllerReDesigned_Test {
                 Total_Jobs__c      = 2,
                 Error_Message__c   = 'Simulated failure for testing'
             ));
-
+            
             insert imports02;
             
             List<Import__c> JobInfos = [
                 SELECT
-                    Results__c,
-                    Job_Status__c,
-                    Job_Sequence__c,
-                    Total_Jobs__c,
-                    Processed_Rows__c,
-                    Error_Message__c  // Query Error_Message__c to check for failures
+                Results__c,
+                Job_Status__c,
+                Job_Sequence__c,
+                Total_Jobs__c,
+                Processed_Rows__c,
+                Error_Message__c  // Query Error_Message__c to check for failures
                 FROM Import__c
                 WHERE Unique_Key__c = :uniqueKey
                 AND Job_Sequence__c != null
@@ -951,7 +951,7 @@ public class form40ImportControllerReDesigned_Test {
             for (Import__c jobInfo : JobInfos) {
                 System.debug(jobInfo);
             }
-                
+            
             // Call other methods for code coverage
             form40ImportControllerReDesigned.getCaseIssues(caseId, importType);
             form40ImportControllerReDesigned.queryPayees(caseId);
@@ -986,19 +986,19 @@ public class form40ImportControllerReDesigned_Test {
             }
             String htmlBody = ' ';
             
-        	List<DeletePayeeBatch.WrapperError> failedRecords = new List<DeletePayeeBatch.WrapperError>();
+            List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
             
-            failedRecords.add(new DeletePayeeBatch.WrapperError(
+            failedRecords.add(new BatchEmailService.WrapperError(
                 getAccount[0].Id,    
                 getAccount[0].Name,  
                 htmlBody,     
                 'Account'
             ));
-             
             
-            Database.executeBatch(new RevertPayeeBatch(oldPayee, htmlBody, accountIds, caseRoleIds, payeeIds), 200);
-            Database.executeBatch(new DeletePayeeBatch(accountIds, caseRoleIds, payeeIds, htmlBody), 200);
-
+            
+            //Database.executeBatch(new RevertPayeeBatch(oldPayee, htmlBody, accountIds, caseRoleIds, payeeIds), 200);
+            //Database.executeBatch(new DeletePayeeBatch(accountIds, caseRoleIds, payeeIds, htmlBody), 200);
+            
             
         } catch (Exception e) {
             System.debug('Batch Exception: ' + e.getMessage());

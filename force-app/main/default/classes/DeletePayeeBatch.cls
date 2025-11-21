@@ -1,5 +1,5 @@
 public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.Stateful, Database.AllowsCallouts {
-
+    
     private Set<Id> accountIds;
     private Set<Id> caseRoleIds;
     private Set<Id> payeeIds;
@@ -17,21 +17,21 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
     private String creationErrorTable;
     private String updateerrorTable;
     public Boolean reverted;
-	public String batchName;
+    public String batchName;
     public List<BatchEmailService.WrapperError> failedRecordsRevert;
     // Summary Map
     Map<String, Integer> processSummary = new Map<String, Integer>{
         'Account_Deleted' => 0,
-        'CaseRole_Deleted' => 0,
-        'Payee_Deleted' => 0,
-        'Account_Failed' => 0,
-        'CaseRole_Failed' => 0,
-        'Payee_Failed' => 0
-    };
-
-    // Use WrapperError from BatchEmailService (not local)
-    List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
-
+            'CaseRole_Deleted' => 0,
+            'Payee_Deleted' => 0,
+            'Account_Failed' => 0,
+            'CaseRole_Failed' => 0,
+            'Payee_Failed' => 0
+            };
+                
+                // Use WrapperError from BatchEmailService (not local)
+                List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
+    
     // Constructor
     public DeletePayeeBatch(
         Set<Id> accountIds,
@@ -52,7 +52,8 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
         String updateerrorTable,
         boolean reverted,
         String batchName,
-        List<BatchEmailService.WrapperError> failedRecordsRevert
+        List<BatchEmailService.WrapperError> failedRecordsRevert,
+        Map<String, Integer> processSummaryRevert
     ) {
         this.accountIds = accountIds;
         this.caseRoleIds = caseRoleIds;
@@ -73,8 +74,13 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
         this.reverted = reverted;
         this.batchName = batchName;
         this.failedRecordsRevert = failedRecordsRevert;
+        
+        for(String revertMap : processSummaryRevert.keySet()){
+            processSummary.put(revertMap, processSummaryRevert.get(revertMap));
+        }
+        
     }
-
+    
     // Batch Start
     public Database.QueryLocator start(Database.BatchableContext bc) {
         // Query Accounts for deletion
@@ -82,7 +88,7 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
             SELECT Id, Name FROM Account WHERE Id IN :accountIds
         ]);
     }
-
+    
     // Batch Execute
     public void execute(Database.BatchableContext bc, List<SObject> scope) {
         try {
@@ -92,7 +98,7 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     SELECT Id, Name FROM Case_Role__c WHERE Id IN :caseRoleIds LIMIT 200
                 ];
                 List<Database.DeleteResult> caseRoleResults = Database.delete(caseRoleList, false);
-
+                
                 for (Integer i = 0; i < caseRoleResults.size(); i++) {
                     if (caseRoleResults[i].isSuccess()) {
                         processSummary.put('CaseRole_Deleted', processSummary.get('CaseRole_Deleted') + 1);
@@ -108,14 +114,14 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     }
                 }
             }
-
+            
             // --- Delete Accounts ---
             if (!accountIds.isEmpty()) {
                 List<Account> accList = [
                     SELECT Id, Name FROM Account WHERE Id IN :accountIds LIMIT 200
                 ];
                 List<Database.DeleteResult> accDeleteResults = Database.delete(accList, false);
-
+                
                 for (Integer i = 0; i < accDeleteResults.size(); i++) {
                     if (accDeleteResults[i].isSuccess()) {
                         processSummary.put('Account_Deleted', processSummary.get('Account_Deleted') + 1);
@@ -131,14 +137,14 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     }
                 }
             }
-
+            
             // --- Delete Payees ---
             if (!payeeIds.isEmpty()) {
                 List<Payee__c> payeeList = [
                     SELECT Id, Name FROM Payee__c WHERE Id IN :payeeIds LIMIT 200
                 ];
                 List<Database.DeleteResult> payeeResults = Database.delete(payeeList, false);
-
+                
                 for (Integer i = 0; i < payeeResults.size(); i++) {
                     if (payeeResults[i].isSuccess()) {
                         processSummary.put('Payee_Deleted', processSummary.get('Payee_Deleted') + 1);
@@ -154,14 +160,21 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     }
                 }
             }
-
-        } catch (Exception ex) {
-            failedRecordsDelete.add(new BatchEmailService.WrapperError(
-                null, null, ex.getMessage(), 'General Error'
-            ));
+            
+        } 
+        catch (Exception ex) {
+            String trace = ex.getStackTraceString();
+            String firstLine = trace.split('\n')[0];
+            
+            this.allErrorMessages += 
+                'General Error : ' + ex.getMessage() +
+                ' | Location: ' + firstLine + '\n';
+            
+            this.batchError = true;
+            reverted = false;
         }
     }
-
+    
     // Batch Finish
     public void finish(Database.BatchableContext bc) {
         
@@ -169,7 +182,7 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
             reverted = true;
         }
         
-        if(reverted == false && batchName == 'RevertPayeeBatch'){
+        if(!failedRecordsRevert.isEmpty()){
             reverted = false;
         }
         
@@ -187,8 +200,8 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
             this.allErrorMessages += 'Apex Job : ' + job.ExtendedStatus;
             this.batchError = true;
         }
-
-
+        
+        
         // Send summary email using BatchEmailService
         BatchEmailService.sendBatchSummaryEmail(
             caseId,

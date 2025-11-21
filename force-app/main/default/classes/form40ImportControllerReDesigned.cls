@@ -18,6 +18,8 @@ public without sharing class form40ImportControllerReDesigned {
           Violation_Type__r.Wizard_Search_Text__c,
           Citation_Form__c,
           Wage_Balance_Due__c,
+          Wages_Due__c,
+          Total_Wage_Interest_Amount__c,
           Amount_Utilized_from_Payee__c,
           Remaining_Amount_to_Upload__c,
           Citation_Number__c,
@@ -518,6 +520,14 @@ public without sharing class form40ImportControllerReDesigned {
       if (isComplete) {
         JobInfos.remove(0);
         delete JobInfos;
+        List<ContentDocument> resultsFile = [
+          SELECT Id
+          FROM ContentDocument
+          WHERE Id IN :fileIds
+        ];
+        if (!resultsFile.isEmpty()) {
+          Database.Delete(resultsFile, false);
+        }
       }
 
       return pollingMap;
@@ -945,9 +955,7 @@ public static List<ImportWrapper> revalidateEditedRows(
         NetWages__c,
         WageAssessment__c,
         TotalDeductions__c,
-        Factor__c,
-        Post_Judgment_Interest_for_Wages__c,
-        Post_Citation_Interest_for_Wages__c
+        Factor__c
       FROM Payee__c
       WHERE Case_Management__c = :caseId
     ];
@@ -979,6 +987,46 @@ public static List<ImportWrapper> revalidateEditedRows(
     string importType
   ) {
     try {
+      // Auto Adjust the factor to 100
+      List<AggregateResult> aggrResult = [
+        SELECT SUM(Factor__c) factorSum
+        FROM Import__c
+        WHERE
+          Case_Management__c = :caseId
+          AND Unique_Key__c = :uniqueKey
+          AND Job_Sequence__c = NULL
+      ];
+
+      if (!aggrResult.isEmpty()) {
+        Decimal totalFactor = (Decimal) aggrResult[0].get('factorSum');
+
+        // Only adjust if not equal to 100
+        if (totalFactor != 100) {
+          // Find the payee with highest net wages
+          Import__c highestPayee = [
+            SELECT Id, Factor__c, Net_Wages_Paid__c
+            FROM Import__c
+            WHERE
+              Case_Management__c = :caseId
+              AND Unique_Key__c = :uniqueKey
+              AND Job_Sequence__c = NULL
+            ORDER BY Net_Wages_Paid__c DESC
+            LIMIT 1
+          ];
+
+          if (highestPayee != null) {
+            // Compute the difference needed
+            Decimal difference = 100 - totalFactor;
+            // difference may be + or -
+
+            // Apply correction
+            highestPayee.Factor__c += difference;
+
+            update highestPayee;
+          }
+        }
+      }
+
       Set<Id> caseIssueIdSet = new Set<Id>(caseIssueIds);
       // Call your batch class
 
@@ -1078,6 +1126,9 @@ public static List<ImportWrapper> revalidateEditedRows(
     public Decimal balanceDue { get; set; }
 
     @AuraEnabled
+    public Decimal balanceDueEEs { get; set; } // shown in form 40 Partial
+
+    @AuraEnabled
     public boolean disableCheckBox {
       get {
         return this.balanceDue == 0 ? true : false;
@@ -1107,12 +1158,17 @@ public static List<ImportWrapper> revalidateEditedRows(
           ? 0
           : ci.Amount_Utilized_from_Payee__c;
 
+        Decimal wageInterestatCitation = ci.Total_Wage_Interest_Amount__c !=
+          null
+          ? ci.Total_Wage_Interest_Amount__c
+          : 0;
+
+        Decimal wagesDue = ci.Wages_Due__c != 0 ? ci.Wages_Due__c : 0;
+        Decimal totalWagesDue = wageInterestatCitation + wagesDue;
+        this.balanceDueEEs = totalWagesDue - utilizedAmount; // shown at Form 40 Partial
         if (importType == 'Form_40')
-          this.balanceDue = ci.Wage_Balance_Due__c - utilizedAmount;
-        if (
-          importType == 'Form_40' &&
-          ci.Wage_Balance_Due__c - utilizedAmount == 0
-        )
+          this.balanceDue = totalWagesDue - utilizedAmount;
+        if (importType == 'Form_40' && totalWagesDue - utilizedAmount == 0)
           this.disableCheckBox = true;
 
         if (importType == 'Corrective_Form_40')
@@ -1120,14 +1176,12 @@ public static List<ImportWrapper> revalidateEditedRows(
         if (importType == 'Corrective_Form_40' && utilizedAmount == 0)
           this.disableCheckBox = true;
 
+        if (importType == 'Form_40_Partial' && utilizedAmount != totalWagesDue)
+          this.balanceDue = reservedAmount;
         if (
           importType == 'Form_40_Partial' &&
-          utilizedAmount != ci.Wage_Balance_Due__c
-        )
-          this.balanceDue = reservedAmount - utilizedAmount;
-        if (
-          importType == 'Form_40_Partial' &&
-          utilizedAmount == ci.Wage_Balance_Due__c
+          (utilizedAmount == totalWagesDue ||
+          reservedAmount + utilizedAmount > totalWagesDue)
         )
           this.balanceDue = 0;
         if (importType == 'Form_40_Partial' && this.balanceDue == 0)
