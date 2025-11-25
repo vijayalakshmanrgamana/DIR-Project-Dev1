@@ -73,10 +73,11 @@ public class form40ImportControllerReDesigned_Test {
         ];
     }
     
-    // --- Main Test Method ---
-    @isTest
-    Public static void method1(){
-        
+    public static String uniqueKey = 'CSV_Results_TEST_KEY';
+    
+    @testSetup
+    public static void createRecords(){
+        String importType = 'Form_40';
         Integer insertedAccounts   = 0;
         Integer insertedCaseRoles  = 0;
         Integer insertedPayees     = 0;
@@ -85,9 +86,16 @@ public class form40ImportControllerReDesigned_Test {
         boolean shouldRunSecondBatch = false;
         Integer NumberofImportRecordsInserted = 0;
         
+        
         // 1. Setup Trigger Settings
         List<Trigger_Settings__c> triggerSettings = new List<Trigger_Settings__c>();
         List<IC_Batch_Notification_Recipients__c> batchEmailSettings = new List<IC_Batch_Notification_Recipients__c>();
+        IC_Batch_Notification_Recipients__c recipient = new IC_Batch_Notification_Recipients__c(
+            Name = 'Test Recipient',
+            Recipient_Email__c = 'test@example.com'
+        );
+        
+        insert recipient;
         
         triggerSettings.add(new Trigger_Settings__c(Name = 'CaseRoleAll', Is_Active__c = false));
         triggerSettings.add(new Trigger_Settings__c(Name = 'dlrs_DIR_ViolationTrigger', Is_Active__c = false));
@@ -102,6 +110,7 @@ public class form40ImportControllerReDesigned_Test {
         triggerSettings.add(new Trigger_Settings__c(Name = 'appealTrigger', Is_Active__c = false));
         
         insert triggerSettings;
+        
         
         // 2. Setup Accounts and Locations
         List<Account> accounts = new List<Account>();
@@ -120,8 +129,6 @@ public class form40ImportControllerReDesigned_Test {
         accounts.add(employerAccount);
         insert accounts;    
         System.Debug('Inserted Account is '+employerAccount.Id);
-        
-        List<Address__c> employerAccountLocation = [SELECT Id, Name FROM Address__c WHERE Entity__c = :employerAccount.Id];
         
         // 3. Setup DIR Employees (Manager and Deputy)
         DIR_Employee__c manager = new DIR_Employee__c(
@@ -179,8 +186,8 @@ public class form40ImportControllerReDesigned_Test {
             Case__c             = bofeCase.Id,
             Entity__c           = employerAccount.Id,
             Role__c             = 'Defendant',
-            Case_Role_Status__c = 'Active',
-            Location__c         = employerAccountLocation[0].Id
+            Case_Role_Status__c = 'Active'
+            //Location__c         = employerAccountLocation[0].Id
         );
         caseRoles.add(bofeDefendantCaseRole);
         insert caseRoles;
@@ -222,7 +229,6 @@ public class form40ImportControllerReDesigned_Test {
         // 9. Setup Case Issues (DIR_Violation__c)
         List<DIR_Violation__c> caseIssues = new List<DIR_Violation__c>();
         Id bofeCaseIssueRecordTypeId = Schema.SObjectType.DIR_Violation__c.getRecordTypeInfosByName().get('BOFE Violations').getRecordTypeId();
-        //Id wcaCaseIssueRecordTypeId = Schema.SObjectType.DIR_Violation__c.getRecordTypeInfosByName().get('WCA Violations').getRecordTypeId();
         
         DIR_Violation__c bofeCaseIssue1 = new DIR_Violation__c(
             Violation_Type__c                   = bofeViolationType.Id,
@@ -257,35 +263,7 @@ public class form40ImportControllerReDesigned_Test {
         caseIssues.add(bofeCaseIssue2);
         insert caseIssues;
         
-        // 10. Setup Payee
-        List<Payee__c> payeeList = new List<Payee__c>();
-        
-        Payee__c payeeSingle = new Payee__c();
-        payeeSingle.Case_Management__c = bofeCase.Id;
-        payeeSingle.Case_Role__c       = caseRoles[0].Id;
-        payeeSingle.NetWages__c        = 98765;
-        payeeSingle.Post_Citation_Interest_for_Wages__c = 0;
-        payeeSingle.Post_Judgment_Interest_for_Wages__c = 0;
-        
-        String fakeJsonPayee = '[' +
-            '  {' +
-            '    "violationTypeName": "VT-1106",' +
-            '    "totalWageAssessment": 15000.00,' +
-            '    "netWages": 10000.00,' +
-            '    "factor": 25.00000,' +
-            '    "deductionsTotal": 0.00,' +
-            '    "citationForm": "BOFE 240B",' +
-            '    "caseIssueName": "V-1558981",' +
-            '    "caseIssueId": "' + caseIssues[0].Id + '",' +
-            '    "caseIssueBreakdown": 10000.000000' +
-            '  }' +
-            ']';
-        payeeSingle.Payee_Association_JSON__c = fakeJsonPayee;
-        payeeList.add(payeeSingle);
-        
-        insert payeeList;
-        
-        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
         
         // 11. Read CSV Data from Static Resource and Insert Import Records
         Id caseId = bofeCase.Id;
@@ -299,11 +277,14 @@ public class form40ImportControllerReDesigned_Test {
             System.debug('ERROR: Static Resource named \'DIRCreatePayee\' not found.');
         }
         
+        
+        
         StaticResource resource = resources[0];
         String csvData = resource.Body.toString();
         // Convert the Blob body to a String
         
         List<String> csvLines = csvData.split('\n');
+        
         if (csvLines.size() < 1) {
             System.debug('ERROR: CSV file is empty.');
             return;
@@ -341,7 +322,7 @@ public class form40ImportControllerReDesigned_Test {
             String uniqueKey = 'CSV_Results_TEST_KEY';
             
             // **Standard Field Assignments**
-            rec.Case_Management__c = caseId;
+            rec.Case_Management__c = getCase[0].Id;
             rec.Unique_Key__c = uniqueKey;
             if(i < 2){
                 rec.Job_Sequence__c  = null;
@@ -392,209 +373,11 @@ public class form40ImportControllerReDesigned_Test {
         }
         
         
-        
-        // 12. Simulate CSV Validation Call
-        String uniqueKey = 'CSV_Results_' + caseId + '_' + Datetime.now().getTime();
-        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
-        List<DIR_Violation__c> getCaseIssue = [SELECT Id FROM DIR_Violation__c];
-        List<Import__c> getImport = [SELECT Id FROM Import__c];
-        
-        System.debug('getCase Size :' +getCase.Size() + 'getCase Size : ' + getCaseIssue.Size() + 'getImport Size :' +getImport.Size());
-        
-        // Query a Case and Violation record (ensure they exist in test data)
-        List<DIR_Case__c> queryCase = [SELECT Id, Name, Import_Form_40_Details__c FROM DIR_Case__c LIMIT 1];
-        List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Name FROM DIR_Violation__c LIMIT 1];
-        String importType = 'Form_40';
-        List<Id> selectedCaseIssueIds = new List<Id>{ queriedCaseIssues[0].Id };
-            
-            String cacheKey = form40ImportControllerReDesigned.parseCSVAndValidate(
-                csvLines,
-                caseId,
-                selectedCaseIssueIds,
-                importType
-            );
-        
-        // 13. Simulate Polling (getImportResults)
-        try {
-            // Call the static method and store the returned Map
-            Map<String, Object> results = form40ImportControllerReDesigned.getImportResults(uniqueKey);
-            
-            // Debug the contents of the map
-            System.debug('*** SUCCESSFUL CALL ***');
-            System.debug('Complete Results Map: ' + results);
-            System.debug('Is Complete: ' + results.get('isComplete'));
-            System.debug('Processed Rows: ' + results.get('processedRows'));
-            System.debug('Has Error: ' + results.get('hasError'));
-            System.debug('Error Message: ' + results.get('errorMessage'));
-            
-            // Note: The 'results' key contains a List<ImportWrapper>, which might not print
-            // fully in the debug log due to log size limits, but the size should be visible.
-            List<Object> pollingData = (List<Object>)results.get('results');
-            if (pollingData != null) {
-                System.debug('Polling Data List Size: ' + pollingData.size());
-            }
-            
-        } catch (Exception e) {
-            // This catch block will capture the System.AuraHandledException or any other errors
-            // and print the full error details to the debug log, which is helpful since
-            // your method wraps the inner error.
-            System.debug(LoggingLevel.ERROR, '*** CAUGHT EXCEPTION FROM APEX METHOD ***');
-            System.debug(LoggingLevel.ERROR, 'Error Type: ' + e.getTypeName());
-            System.debug(LoggingLevel.ERROR, 'Error Message: ' + e.getMessage());
-            System.debug(LoggingLevel.ERROR, 'Stack Trace: ' + e.getStackTraceString());
-        }
-        
-        // 14. Additional Setup for Bulk Payee Creation & Polling Test
-        uniqueKey = 'CSV_Results_TEST_KEY';
-        importType = 'Corrective_Form_40';
-        System.debug('form40ImportControllerReDesigned.runBulkPayeeCreation :'+ caseId);
-        System.debug('form40ImportControllerReDesigned.runBulkPayeeCreation :'+selectedCaseIssueIds);
-        System.debug('form40ImportControllerReDesigned.runBulkPayeeCreation :'+importType);
-        System.debug('form40ImportControllerReDesigned.runBulkPayeeCreation :'+uniqueKey);
-        
-        
-        //String result = form40ImportControllerReDesigned.getLastModifiedDetails(queryCase[0].Id);
-        
-        
-        // Prepare fake JSON file content (List<ImportWrapper> format)
-        List<form40ImportControllerReDesigned.ImportWrapper> wrappers = new List<form40ImportControllerReDesigned.ImportWrapper>();
-        form40ImportControllerReDesigned.ImportWrapper w = new form40ImportControllerReDesigned.ImportWrapper();
-        w.rowNumber = 1;
-        w.isValid = true;
-        w.fieldValues.put('Employee First Name', 'John');
-        w.fieldValues.put('Employee Last Name', 'Doe');
-        w.errorMessages.add('No errors');
-        wrappers.add(w);
-        
-        // Serialize JSON
-        String jsonData = JSON.serialize(wrappers);
-        
-        // Create ContentVersion (to simulate uploaded JSON results file)
-        ContentVersion cv = new ContentVersion(
-            Title = 'ImportResults_Test_' + System.now().getTime(),
-            PathOnClient = 'ImportResults.json',
-            VersionData = Blob.valueOf(jsonData)
-        );
-        insert cv;
-        
-        // Get the linked ContentDocumentId
-        Id fileId = [
-            SELECT ContentDocumentId    
-            FROM ContentVersion    
-            WHERE Id = :cv.Id    
-            LIMIT 1
-        ].ContentDocumentId;
-        
-        // Create Import__c records simulating jobs (Job_Sequence__c 0 = initial tracking record)
-        List<Import__c> imports = new List<Import__c>();
-        
-        // Job 0 (initial tracking)
-        imports.add(new Import__c(
-            Unique_Key__c      = 'CSV_Results_TEST_KEY',
-            Job_Status__c      = 'Processing',
-            Case_Management__c = getCase[0].Id,
-            Job_Sequence__c    = 0,
-            Total_Jobs__c      = 2,
-            Results__c         = 'CSV_Results_TEST_KEY'
-        ));
-        
-        // Job 1 (Completed, has file result)
-        imports.add(new Import__c(
-            Unique_Key__c      = 'CSV_Results_TEST_KEY',
-            Job_Status__c      = 'Completed',
-            Case_Management__c = getCase[0].Id,
-            Job_Sequence__c    = 1,
-            Total_Jobs__c      = 2,
-            Processed_Rows__c  = 1,
-            Results__c         = fileId
-        ));
-        
-        // Job 2 (Failed, with error message)
-        imports.add(new Import__c(
-            Unique_Key__c      = 'CSV_Results_TEST_KEY',
-            Job_Status__c      = 'Failed',
-            Case_Management__c = getCase[0].Id,
-            Job_Sequence__c    = 2,
-            Total_Jobs__c      = 2,
-            Error_Message__c   = 'Simulated failure for testing'
-        ));
-        
-        insert imports;
-        
-        
-        Map<String, Object> resultsPolling = form40ImportControllerReDesigned.getImportResults(cacheKey);
-        
-        // The query below is for a different purpose than the one that caused the error, but we'll leave it
-        Id contentDocId = [
-            SELECT ContentDocumentId FROM ContentVersion WHERE Id = :cv.Id LIMIT 1
-        ].ContentDocumentId;
-        
-        // FIX: Query the inserted record (no error now)
-        DIR_Violation__c violation = [SELECT Id, Name FROM DIR_Violation__c WHERE Id = :caseIssues[0].Id LIMIT 1];
-        uniqueKey = 'CSV_Results_TEST_KEY';
-        importType = 'Form_40';
-        
-        List<DIR_Violation__c> violation01 = [SELECT Id, Name FROM DIR_Violation__c];
-        
-        System.debug(violation01.size());
-        
-        // 15. Simulate Revalidation of Edited Rows
-        // Create one valid and one invalid ImportWrapper
-        List<form40ImportControllerReDesigned.ImportWrapper> editedRows = new List<form40ImportControllerReDesigned.ImportWrapper>();
-        
-        //Valid record
-        form40ImportControllerReDesigned.ImportWrapper validRow = new form40ImportControllerReDesigned.ImportWrapper();
-        validRow.fieldValues.put('Employee First Name', 'John');
-        validRow.fieldValues.put('Employee Last Name', 'Smith');
-        validRow.fieldValues.put('Employee Street', '123 Main');
-        validRow.fieldValues.put('Employee Zip', '90210');
-        
-        //Invalid record (missing required fields)
-        form40ImportControllerReDesigned.ImportWrapper invalidRow = new form40ImportControllerReDesigned.ImportWrapper();
-        invalidRow.fieldValues.put('Employee First Name', '');
-        invalidRow.fieldValues.put('Employee Last Name', '');
-        
-        editedRows.add(validRow);
-        editedRows.add(invalidRow);
-        
-        try {
-            
-            List<form40ImportControllerReDesigned.ImportWrapper> resultsOfrevalidateEditedRows =
-                form40ImportControllerReDesigned.revalidateEditedRows(
-                    editedRows,
-                    uniqueKey,
-                    importType                
-                );
-            
-            System.debug('*** SUCCESSFUL CALL ***');
-            System.debug('Complete Results Map: ' + resultsOfrevalidateEditedRows);
-            
-            
-        } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, '*** CAUGHT EXCEPTION FROM APEX METHOD ***');
-            System.debug(LoggingLevel.ERROR, 'Error Type: ' + e.getTypeName());
-            System.debug(LoggingLevel.ERROR, 'Error Message: ' + e.getMessage());
-            System.debug(LoggingLevel.ERROR, 'Stack Trace: ' + e.getStackTraceString());
-        }
-        
-        List<Import__c> imports001 = [SELECT Id, Unique_Key__c, Job_Status__c, Case_Management__c, Job_Sequence__c, Total_Jobs__c FROM Import__c];
-        System.debug(uniqueKey);
-        for(Import__c imp : imports001){
-            System.debug(imp);
-        }
-        
-        
-        
-        Set<Id> setOfCaseIssueIds = new Set<Id>();
-        for(DIR_Violation__c caseIssueId : violation01){
-            setOfCaseIssueIds.add(caseIssueId.Id);
-        }
-        System.debug(caseId);
-        System.debug(setOfCaseIssueIds);
-        System.debug(importType);
-        System.debug(uniqueKey);
-        
-        // 16. Manual Execution of Payee Creation Logic (Mimicking Batch Start)
+        List<Account> accsToUpload = new List<Account>();
+        List<Payee__c> createPayeeList = new List<Payee__c>();
+        List<Case_Role__c> createCaseRoleList = new List<Case_Role__c>();
+        List<recordWrapper> failedDMLRecords = new List<recordWrapper>();
+        Map<String, recordWrapper> accPayeeMap = new Map<String, recordWrapper>();
         
         List<Import__c> importsMerged = [
             SELECT Id, Name, Unique_Key__c, Job_Status__c, Case_Management__c, Job_Sequence__c, Total_Jobs__c,
@@ -604,25 +387,17 @@ public class form40ImportControllerReDesigned_Test {
             Has_Matching_Account__c, Direct_Pay__c
             FROM Import__c
             WHERE Has_Matching_Account__c = true
-            OR (Case_Management__c = :caseId AND Unique_Key__c = :uniqueKey AND Job_Sequence__c = NULL)
+            OR (Case_Management__c = :getCase[0].Id AND Unique_Key__c = :uniqueKey AND Job_Sequence__c = NULL)
         ];
         System.debug('Test Class  ' + importsMerged.Size() + ' Import Records inserted.');
         
-        
-        List<Account> accsToUpload = new List<Account>();
-        List<Payee__c> createPayeeList = new List<Payee__c>();
-        List<Case_Role__c> createCaseRoleList = new List<Case_Role__c>();
-        List<recordWrapper> failedDMLRecords = new List<recordWrapper>();
-        Map<String, recordWrapper> accPayeeMap = new Map<String, recordWrapper>();
         
         // Fetch Case Issues
         List<DIR_Violation__c> caseIssueList = [
             SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, Amount_Utilized_from_Payee__c,
             Violation_Type__r.Violation_Type_Name__c,
             Violation_Type__r.Violation_Type__c
-            FROM DIR_Violation__c
-            WHERE Id = :setOfCaseIssueIds
-        ];
+            FROM DIR_Violation__c];
         
         Id personAccRTID = Schema.SObjectType.Account.getRecordTypeInfosByName().get('Person Account').getRecordTypeId();
         
@@ -658,7 +433,7 @@ public class form40ImportControllerReDesigned_Test {
                 accPayee.totalDeductions    = String.valueOf(record.Deductions_Total__c);
                 accPayee.netWages           = String.valueOf(record.Net_Wages_Paid__c);
                 accPayee.factor             = String.valueOf(record.Factor__c);
-                accPayee.caseManagment      = caseId;
+                accPayee.caseManagment      = getCase[0].Id;
                 accPayeeMap.put(accPayee.key, accPayee);
             }
         } catch (Exception e) {
@@ -682,7 +457,7 @@ public class form40ImportControllerReDesigned_Test {
             for (Account acc : accsToUpload) {
                 createCaseRoleList.add(new Case_Role__c(
                     Account_Name__c = acc.Name,
-                    Case__c         = caseId,
+                    Case__c         = getCase[0].Id,
                     Role__c         = 'Payee - Employee',
                     Entity__c       = acc.Id
                 ));
@@ -724,7 +499,12 @@ public class form40ImportControllerReDesigned_Test {
                 
                 if (accP != null) {
                     Payee__c payee = new Payee__c();
-                    payee.PeriodCovered__c = accP.periodCovered;
+                    if(accP.directPay == 'Yes'){
+                        payee.PeriodCovered__c = '12/06/2025-12/12/2025';
+                    }
+                    else{
+                        payee.PeriodCovered__c = accP.periodCovered;
+                    }
                     
                     if (!String.isEmpty(accP.wageAsssesment)) payee.WageAssessment__c = toDecimal(accP.wageAsssesment);
                     if (!String.isEmpty(accP.grossWages)) payee.GrossWages__c = toDecimal(accP.grossWages);
@@ -738,7 +518,7 @@ public class form40ImportControllerReDesigned_Test {
                     if (!String.isEmpty(accP.factor)) payee.Factor__c = toDecimal(accP.factor);
                     if (!String.isEmpty(accP.directPay)) payee.Direct_Pay__c = accP.directPay;
                     
-                    payee.Case_Management__c = caseId;
+                    payee.Case_Management__c = getCase[0].Id;
                     payee.Case_Role__c       = cr.Id;
                     payee.Payee_Type__c      = 'Employee';
                     payee.Status__c          = 'Unverified';
@@ -769,6 +549,8 @@ public class form40ImportControllerReDesigned_Test {
                     }
                     
                     payee.Payee_Association_JSON__c = JSON.serialize(caseIssueJsonList);
+                    payee.Post_Citation_Interest_for_Wages__c = 0;
+                    payee.Post_Judgment_Interest_for_Wages__c = 0;
                     createPayeeList.add(payee);
                 } else {
                     System.debug('Else payee');
@@ -780,7 +562,7 @@ public class form40ImportControllerReDesigned_Test {
                     noMatchAccount.shippingCity       = cr.Entity__r.ShippingCity;
                     noMatchAccount.shippingState      = cr.Entity__r.ShippingState;
                     noMatchAccount.shippingPostalCode = cr.Entity__r.ShippingPostalCode;
-                    noMatchAccount.caseManagment      = caseId;
+                    noMatchAccount.caseManagment      = getCase[0].Id;
                     
                     failedDMLRecords.add(noMatchAccount);
                 }
@@ -813,8 +595,371 @@ public class form40ImportControllerReDesigned_Test {
         System.debug('Test Class  ' + NumberofImportRecordsInserted + ' Import records inserted.');
         
         
-        // 18. Update Job Tracking Record with Payee Map (Simulating Batch Scope)
-        List<Payee__c> allPayeeList = queryPayees(caseId);
+        List<Payee__c> oldPayeeRecords = [SELECT Id, Payee_Association_JSON__c, Direct_Pay__c, NetWages__c, WageAssessment__c, TotalDeductions__c,
+                                          Factor__c, Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c, Payee_Name__c
+                                          FROM 	Payee__c];
+        Map<Id, Map<String, String>> payeeRevertDataMap = new Map<Id, Map<String, String>>();
+        
+        // Use the retrieved list of old payee records
+        for(Payee__c Oldpayee : oldPayeeRecords){
+            
+            Map<String, String> details = new Map<String, String>();
+            
+            details.put('', Oldpayee.Id);
+            details.put('Payee_Association_JSON__c', Oldpayee.Payee_Association_JSON__c);
+            details.put('Direct_Pay__c', String.valueOf(Oldpayee.Direct_Pay__c));
+            details.put('NetWages__c', String.valueOf(Oldpayee.NetWages__c));
+            details.put('WageAssessment__c', String.valueOf(Oldpayee.WageAssessment__c));
+            details.put('TotalDeductions__c', String.valueOf(Oldpayee.TotalDeductions__c));
+            details.put('Factor__c', String.valueOf(Oldpayee.Factor__c));
+            details.put('Post_Citation_Interest_for_Wages__c', String.valueOf(Oldpayee.Post_Citation_Interest_for_Wages__c));
+            details.put('Post_Judgment_Interest_for_Wages__c', String.valueOf(Oldpayee.Post_Judgment_Interest_for_Wages__c));
+            details.put('Payee_Name__c', String.ValueOf(Oldpayee.Payee_Name__c));
+            
+            if(String.valueOf(Oldpayee.Direct_Pay__c) == 'Yes'){
+                details.put('Direct_Pay__c', 'Yes,No,01');
+            }
+            payeeRevertDataMap.put(Oldpayee.Id, details);
+            
+        }
+        String serializedData = JSON.serialize(payeeRevertDataMap);
+        
+        ContentVersion cvMultipleInsert = new ContentVersion();
+        cvMultipleInsert.Title = 'PayeeRevertData' + uniqueKey + 'BatchCount';
+        cvMultipleInsert.PathOnClient = 'PayeeRevertData' + uniqueKey + 'BatchCount' + '.json';
+        cvMultipleInsert.VersionData = Blob.valueOf(serializedData);
+        
+        List<ContentVersion> cvList = new List<ContentVersion>{ cvMultipleInsert };
+            List<Database.SaveResult> cvResults = Database.insert(cvList, true);
+        
+        for(ContentVersion conver : cvList){
+            System.debug('Test ContentVersion : '+ conver);
+            System.debug('Test ContentVersion : '+ conver.Title);
+            System.debug('Test ContentVersion : '+ conver.VersionData);
+        }
+        
+        List<form40ImportControllerReDesigned.ImportWrapper> wrappers = new List<form40ImportControllerReDesigned.ImportWrapper>();
+        form40ImportControllerReDesigned.ImportWrapper w = new form40ImportControllerReDesigned.ImportWrapper();
+        w.rowNumber = 1;
+        w.isValid = true;
+        w.fieldValues.put('Employee First Name', 'John');
+        w.fieldValues.put('Employee Last Name', 'Doe');
+        w.errorMessages.add('No errors');
+        wrappers.add(w);
+        
+        String jsonData = JSON.serialize(wrappers);
+        
+        ContentVersion cv = new ContentVersion(
+            Title = 'ImportResults_Test_' + System.now().getTime(),
+            PathOnClient = 'ImportResults.json',
+            VersionData = Blob.valueOf(jsonData)
+        );
+        insert cv;
+        
+        Id fileId = [
+            SELECT ContentDocumentId    
+            FROM ContentVersion    
+            WHERE Id = :cv.Id    
+            LIMIT 1
+        ].ContentDocumentId;
+        
+        List<Import__c> imports = new List<Import__c>();
+        
+        // Job 0 (initial tracking)
+        imports.add(new Import__c(
+            Unique_Key__c      = 'CSV_Results_TEST_KEY',
+            Job_Status__c      = 'Processing',
+            Case_Management__c = getCase[0].Id,
+            Job_Sequence__c    = 0,
+            Total_Jobs__c      = 2,
+            Results__c         = fileId
+        ));
+        
+        // Job 1 (Completed, has file result)
+        imports.add(new Import__c(
+            Unique_Key__c      = 'CSV_Results_TEST_KEY',
+            Job_Status__c      = 'Completed',
+            Case_Management__c = getCase[0].Id,
+            Job_Sequence__c    = 1,
+            Total_Jobs__c      = 2,
+            Processed_Rows__c  = 1,
+            Results__c         = fileId
+        ));
+        
+        // Job 2 (Failed, with error message)
+        imports.add(new Import__c(
+            Unique_Key__c      = 'CSV_Results_TEST_KEY',
+            Job_Status__c      = 'Failed',
+            Case_Management__c = getCase[0].Id,
+            Job_Sequence__c    = 2,
+            Total_Jobs__c      = 2,
+            Error_Message__c   = 'Simulated failure for testing'
+        ));
+        
+        insert imports;
+        
+        String contentTitlePattern = 'PayeeRevertData' + uniqueKey + '%';
+        ContentVersion cvinsert = new ContentVersion();
+        cvinsert.Title = 'PayeeRevertData' + uniqueKey + 'BatchCount';
+        cvinsert.VersionData = Blob.valueOf('Test 01');
+        cvinsert.PathOnClient = 'PayeeRevertData' + uniqueKey + 'BatchCount' + '.json';
+        insert cvinsert;
+        
+        
+    }
+    
+    @isTest
+    Public static void form40CRD(){
+        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        List<DIR_Case__c> queryCase = [SELECT Id, Name, Import_Form_40_Details__c FROM DIR_Case__c LIMIT 1];
+        List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Violation_Type__c, Case__c, Assessment__c, Citation_Amount__c,
+                                                    Wages_Due__c, Original_Penalty_Assessment_Amount__c,
+                                                    Total_Interest_Amount__c, Status__c,
+                                                    Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
+                                                    Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
+        
+        String importType = 'Form_40';
+        
+        
+        Id caseId = getCase[0].Id;
+        List<StaticResource> resources = [
+            SELECT Body
+            FROM StaticResource
+            WHERE Name = 'DIRCreatePayee'
+            LIMIT 1
+        ];
+        if (resources.isEmpty()) {
+            System.debug('ERROR: Static Resource named \'DIRCreatePayee\' not found.');
+        }
+        
+        
+        
+        StaticResource resource = resources[0];
+        String csvData = resource.Body.toString();
+        List<String> csvLines = csvData.split('\n');
+        
+        if (csvLines.size() < 1) {
+            System.debug('ERROR: CSV file is empty.');
+            return;
+        }
+        
+        
+        // Assuming the first line is the header row
+        List<String> headers = csvLines[0].split(',');
+        // Clean up headers (remove quotes/trim whitespace)
+        for (Integer h = 0; h < headers.size(); h++) {
+            headers[h] = headers[h].trim().replaceAll('"', '');
+        }
+        
+        // List to hold the records we are inserting
+        List<Import__c> toInsert = new List<Import__c>();
+        Integer rowCount = 0;
+        
+        // Loop Through Data Rows (Starting from index 1, skipping the header)
+        for (Integer i = 1; i < csvLines.size(); i++) {
+            String line = csvLines[i];
+            if (String.isBlank(line)) continue;
+            
+            // A simple split by comma can break if fields contain commas (need better CSV parsing for that)
+            List<String> values = line.split(',');
+            Map<String, String> fieldValues = new Map<String, String>();
+            
+            // Map the header name to the corresponding value
+            for (Integer j = 0; j < headers.size() && j < values.size(); j++) {
+                // Trim each value and remove surrounding quotes
+                String val = values[j].trim().replaceAll('"', '');
+                fieldValues.put(headers[j], val);
+            }
+            
+            Import__c rec = new Import__c();
+            
+            // **Standard Field Assignments**
+            rec.Case_Management__c = getCase[0].Id;
+            rec.Unique_Key__c = uniqueKey;
+            if(i < 2){
+                rec.Job_Sequence__c  = null;
+            }
+            else if (i < 5){
+                rec.Has_Matching_Account__c = true;
+            }
+            else
+            {
+                rec.Has_Matching_Account__c = false;
+            }
+            
+            // Assuming this default value
+            
+            // **String Field Assignments**
+            rec.Employee_First_Name__c = fieldValues.get('Employee First Name');
+            rec.Employee_Last_Name__c = fieldValues.get('Employee Last Name');
+            rec.Employee_Street__c = fieldValues.get('Employee Street');
+            rec.Employee_City__c = fieldValues.get('Employee City');
+            rec.Employee_State__c = fieldValues.get('Employee State');
+            rec.Employee_Zip__c = fieldValues.get('Employee Zip');
+            rec.Period_Covered_by_Adjustment__c = fieldValues.get('Period Covered by Adjustment');
+            rec.Direct_Pay__c = fieldValues.get('Direct Pay');
+            
+            // **Decimal Field Assignments with Null Check and Conversion**
+            String totalWage = fieldValues.get('Total Wage Assessment');
+            rec.Total_Wage_Assessment__c = String.isNotBlank(totalWage) ? Decimal.valueOf(totalWage) : null;
+            
+            String deductionsTotal = fieldValues.get('Deductions: Total');
+            rec.Deductions_Total__c = String.isNotBlank(deductionsTotal) ? Decimal.valueOf(deductionsTotal) : null;
+            
+            String netWages = fieldValues.get('Net Wages Assessed');
+            rec.Net_Wages_Paid__c = String.isNotBlank(netWages) ? Decimal.valueOf(netWages) : null;
+            
+            String factor = fieldValues.get('Factor');
+            rec.Factor__c = String.isNotBlank(factor) ? Decimal.valueOf(factor) : null;
+            
+            toInsert.add(rec);
+        }
+        
+        if (!toInsert.isEmpty()) {
+            try {
+                insert toInsert;
+                System.debug('SUCCESS: ' + toInsert.size() + ' Import__c records were created.');
+            } catch (DmlException e) {
+                System.debug('DML ERROR: Failed to insert records. Error: ' + e.getMessage());
+            }
+        }
+        
+        
+        String uniqueKey = 'CSV_Results_TEST_KEY';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        boolean shouldRunSecondBatch = false;
+        Integer NumberofImportRecordsInserted = 0;
+        
+        
+        
+        System.debug(queriedCaseIssues.size());
+        
+        Set<Id> setOfCaseIssueIds = new Set<Id>();
+        for(DIR_Violation__c caseIssueId : queriedCaseIssues){
+            setOfCaseIssueIds.add(caseIssueId.Id);
+        }
+        System.debug(getCase[0].Id);
+        System.debug(setOfCaseIssueIds);
+        System.debug(importType);
+        System.debug(uniqueKey);
+        List<Id> selectedCaseIssueIds = new List<Id>{ queriedCaseIssues[0].Id };
+            
+            String cacheKey = form40ImportControllerReDesigned.parseCSVAndValidate(
+                csvLines,
+                getCase[0].Id,
+                selectedCaseIssueIds,
+                importType
+            );
+        
+        delete toInsert;
+        
+        try {
+            Map<String, Object> results = form40ImportControllerReDesigned.getImportResults(uniqueKey);            
+        } catch (Exception e) {
+        }
+        
+        uniqueKey = 'CSV_Results_TEST_KEY';
+        importType = 'Corrective_Form_40';
+        
+        List<form40ImportControllerReDesigned.ImportWrapper> wrappers = new List<form40ImportControllerReDesigned.ImportWrapper>();
+        form40ImportControllerReDesigned.ImportWrapper w = new form40ImportControllerReDesigned.ImportWrapper();
+        w.rowNumber = 1;
+        w.isValid = true;
+        w.fieldValues.put('Employee First Name', 'John');
+        w.fieldValues.put('Employee Last Name', 'Doe');
+        w.errorMessages.add('No errors');
+        wrappers.add(w);
+        
+        String jsonData = JSON.serialize(wrappers);
+        
+        ContentVersion cv = new ContentVersion(
+            Title = 'ImportResults_Test_' + System.now().getTime(),
+            PathOnClient = 'ImportResults.json',
+            VersionData = Blob.valueOf(jsonData)
+        );
+        insert cv;
+        
+        Id fileId = [
+            SELECT ContentDocumentId    
+            FROM ContentVersion    
+            WHERE Id = :cv.Id    
+            LIMIT 1
+        ].ContentDocumentId;
+        
+        List<Import__c> imports = new List<Import__c>();
+        
+        // Job 0 (initial tracking)
+        imports.add(new Import__c(
+            Unique_Key__c      = 'CSV_Results_TEST_KEY',
+            Job_Status__c      = 'Processing',
+            Case_Management__c = getCase[0].Id,
+            Job_Sequence__c    = 0,
+            Total_Jobs__c      = 2,
+            Results__c         = fileId
+        ));
+        
+        // Job 1 (Completed, has file result)
+        imports.add(new Import__c(
+            Unique_Key__c      = 'CSV_Results_TEST_KEY',
+            Job_Status__c      = 'Completed',
+            Case_Management__c = getCase[0].Id,
+            Job_Sequence__c    = 1,
+            Total_Jobs__c      = 2,
+            Processed_Rows__c  = 1,
+            Results__c         = fileId
+        ));
+        
+        // Job 2 (Failed, with error message)
+        imports.add(new Import__c(
+            Unique_Key__c      = 'CSV_Results_TEST_KEY',
+            Job_Status__c      = 'Failed',
+            Case_Management__c = getCase[0].Id,
+            Job_Sequence__c    = 2,
+            Total_Jobs__c      = 2,
+            Error_Message__c   = 'Simulated failure for testing'
+        ));
+        
+        insert imports;
+        
+        
+        Map<String, Object> resultsPolling = form40ImportControllerReDesigned.getImportResults(cacheKey);
+        
+        Id contentDocId = [
+            SELECT ContentDocumentId FROM ContentVersion WHERE Id = :cv.Id LIMIT 1
+        ].ContentDocumentId;
+        
+        
+        
+        List<form40ImportControllerReDesigned.ImportWrapper> editedRows = new List<form40ImportControllerReDesigned.ImportWrapper>();
+        
+        //Valid record
+        form40ImportControllerReDesigned.ImportWrapper validRow = new form40ImportControllerReDesigned.ImportWrapper();
+        validRow.fieldValues.put('Employee First Name', 'John');
+        validRow.fieldValues.put('Employee Last Name', 'Smith');
+        validRow.fieldValues.put('Employee Street', '123 Main');
+        validRow.fieldValues.put('Employee Zip', '90210');
+        
+        //Invalid record (missing required fields)
+        form40ImportControllerReDesigned.ImportWrapper invalidRow = new form40ImportControllerReDesigned.ImportWrapper();
+        invalidRow.fieldValues.put('Employee First Name', '');
+        invalidRow.fieldValues.put('Employee Last Name', '');
+        
+        editedRows.add(validRow);
+        editedRows.add(invalidRow);
+        
+        form40ImportControllerReDesigned.revalidateEditedRows(
+            editedRows,
+            uniqueKey,
+            getCase[0].Id                
+        );
+        
+        
+        List<Payee__c> allPayeeList = queryPayees(getCase[0].Id);
         map<string, Payee__c> payeeMap = new Map<string, Payee__c>();
         for (Payee__c py : allPayeeList) {
             payeeMap.put(py.Case_Role__r.Entity__r.AccountMatch__c.toLowerCase(), py);
@@ -839,128 +984,14 @@ public class form40ImportControllerReDesigned_Test {
             LIMIT 1
         ].ContentDocumentId;
         
-        List<Import__c> getImportResutlt = [
-            SELECT Id, Name, Unique_Key__c, Job_Status__c, Case_Management__c, Job_Sequence__c, Total_Jobs__c,
-            Deductions_Total__c, Employee_City__c, Employee_First_Name__c, Employee_Last_Name__c,
-            Employee_State__c, Employee_Street__c, Employee_Zip__c, Factor__c, Gross_Wages_Paid__c,
-            Net_Wages_Paid__c, Period_Covered_by_Adjustment__c, Total_Wage_Assessment__c,
-            Has_Matching_Account__c, Direct_Pay__c
-            FROM Import__c
-            WHERE Case_Management__c = :caseId AND Unique_Key__c = :uniqueKey AND Job_Sequence__c = 0
-        ];
+        System.debug('caseId :'+getCase[0].Id);
+        System.debug('Unique_Key__c :'+uniqueKey);
         
-        Import__c importResult = new Import__c(
-            Id = getImportResutlt[0].Id,
-            Unique_Key__c = uniqueKey,
-            Job_Status__c = 'Processing',
-            Case_Management__c = caseId,
-            Job_Sequence__c = 0,
-            Processed_Rows__c = 0,
-            Results__c = payeeMapFileId
-        );
-        update importResult;
-        System.Debug('Job Tracking Import record Inserted ' + importResult.Id);    
-        System.debug('Job Tracking Import record Inserted '+payeeMapFileId);
-        System.debug('Job Tracking Import record Inserted '+jsonPayeeMap);
-        
-        List<Import__c> initialRecord = [
-            SELECT Results__c 
-            FROM Import__c 
-            WHERE Unique_Key__c = :uniqueKey 
-            AND Job_Sequence__c = 0 
-            LIMIT 1
-        ];
-        System.debug('Test Class  ' + initialRecord[0] + 'Test initialRecord.');     
-        
-        
-        // 19. Execute Batch Process and Call UI Methods
         try {
-            
-            IC_Batch_Notification_Recipients__c recipient = new IC_Batch_Notification_Recipients__c(
-                Name = 'Test Recipient',
-                Recipient_Email__c = 'test@example.com'
-            );
-            insert recipient;
-            
-            List<Payee__c> payeeListIcRoll  = [SELECT Id, Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c FROM Payee__c WHERE Id = :payeeSingle.Id];
-            System.debug('payeeListIcRoll :'+ payeeListIcRoll);
-            
-            ProcessImportRecordsRedesigned batch = new ProcessImportRecordsRedesigned();
-            batch.caseId = caseId;
-            batch.importType = importType;
-            batch.caseIssueIds = setOfCaseIssueIds;
-            batch.uniqueKey = uniqueKey;
-            
-            Test.StartTest();
-            Database.executeBatch(batch, 200);
-            Test.StopTest();
-            
-            uniqueKey = 'CSV_Results_TEST_KEY';
-            
-            // Create Import__c records simulating jobs (Job_Sequence__c 0 = initial tracking record)
-            List<Import__c> imports02 = new List<Import__c>();
-            
-            // Job 0 (initial tracking)
-            imports02.add(new Import__c(
-                Unique_Key__c      = 'CSV_Results_TEST_KEY',
-                Job_Status__c      = 'Processing',
-                Case_Management__c = getCase[0].Id,
-                Job_Sequence__c    = 0,
-                Total_Jobs__c      = 2,
-                Results__c         = 'CSV_Results_TEST_KEY'
-            ));
-            
-            // Job 1 (Completed, has file result)
-            imports02.add(new Import__c(
-                Unique_Key__c      = 'CSV_Results_TEST_KEY',
-                Job_Status__c      = 'Completed',
-                Case_Management__c = getCase[0].Id,
-                Job_Sequence__c    = 1,
-                Total_Jobs__c      = 2,
-                Processed_Rows__c  = 1,
-                Results__c         = fileId
-            ));
-            
-            // Job 2 (Failed, with error message)
-            imports02.add(new Import__c(
-                Unique_Key__c      = 'CSV_Results_TEST_KEY',
-                Job_Status__c      = 'Failed',
-                Case_Management__c = getCase[0].Id,
-                Job_Sequence__c    = 2,
-                Total_Jobs__c      = 2,
-                Error_Message__c   = 'Simulated failure for testing'
-            ));
-            
-            insert imports02;
-            
-            List<Import__c> JobInfos = [
-                SELECT
-                Results__c,
-                Job_Status__c,
-                Job_Sequence__c,
-                Total_Jobs__c,
-                Processed_Rows__c,
-                Error_Message__c  // Query Error_Message__c to check for failures
-                FROM Import__c
-                WHERE Unique_Key__c = :uniqueKey
-                AND Job_Sequence__c != null
-                ORDER BY Job_Sequence__c
-            ];
-            
-            System.debug('jobInfo :' +JobInfos);
-            for (Import__c jobInfo : JobInfos) {
-                System.debug(jobInfo);
-            }
-            
-            // Call other methods for code coverage
-            form40ImportControllerReDesigned.getCaseIssues(caseId, importType);
-            form40ImportControllerReDesigned.queryPayees(caseId);
-            form40ImportControllerReDesigned.runBulkPayeeCreation(caseId, selectedCaseIssueIds, uniqueKey, importType);
-            form40ImportControllerReDesigned.getImportResults(uniqueKey); 
-            
-            
-            IC_RollUpPayeeInterest.rollupPayeeInterest(payeeList);
-            
+            form40ImportControllerReDesigned.getCaseIssues(getCase[0].Id, importType);
+            form40ImportControllerReDesigned.queryPayees(getCase[0].Id);
+            form40ImportControllerReDesigned.runBulkPayeeCreation(getCase[0].Id, selectedCaseIssueIds, uniqueKey, importType);
+            form40ImportControllerReDesigned.getImportResults(uniqueKey);             
             
             
             List<Account> getAccount = [SELECT Id, Name FROM Account];
@@ -986,22 +1017,611 @@ public class form40ImportControllerReDesigned_Test {
             }
             String htmlBody = ' ';
             
-            List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
-            
-            failedRecords.add(new BatchEmailService.WrapperError(
-                getAccount[0].Id,    
-                getAccount[0].Name,  
-                htmlBody,     
-                'Account'
-            ));
-            
-            
-            //Database.executeBatch(new RevertPayeeBatch(oldPayee, htmlBody, accountIds, caseRoleIds, payeeIds), 200);
-            //Database.executeBatch(new DeletePayeeBatch(accountIds, caseRoleIds, payeeIds, htmlBody), 200);
-            
+            for(Integer i=0; i<5; i++){
+                
+                List<form40ImportControllerReDesigned.CaseIssueWrapper> issueList =
+                    form40ImportControllerReDesigned.getCaseIssues(getCase[0].Id, importType);
+                importType = 'Form_40_Partial';
+                
+            }
             
         } catch (Exception e) {
             System.debug('Batch Exception: ' + e.getMessage());
+        }
+        
+        try {
+            System.debug('---- Calling getCaseIssues ----');
+            List<form40ImportControllerReDesigned.CaseIssueWrapper> issues =
+                form40ImportControllerReDesigned.getCaseIssues(
+                    null,     // caseId
+                    null      // importType
+                );
+            System.debug('getCaseIssues result: ' + issues);
+        }
+        catch (Exception ex) {
+            System.debug('ERROR in getCaseIssues: ' + ex.getMessage());
+        }
+        
+        try {
+            System.debug('---- Calling parseCSVAndValidate ----');
+            String parseResult =
+                form40ImportControllerReDesigned.parseCSVAndValidate(
+                    null,     // List<String> lines
+                    null,     // caseId
+                    null,     // selectedCaseIssueIds
+                    null      // importType
+                );
+            System.debug('parseCSVAndValidate result: ' + parseResult);
+        }
+        catch (Exception ex) {
+            System.debug('ERROR in parseCSVAndValidate: ' + ex.getMessage());
+        }
+        
+        try {
+            System.debug('---- Calling getImportResults ----');
+            Map<String, Object> importResults =
+                form40ImportControllerReDesigned.getImportResults(
+                    null      // cacheKey
+                );
+            System.debug('getImportResults result: ' + importResults);
+        }
+        catch (Exception ex) {
+            System.debug('ERROR in getImportResults: ' + ex.getMessage());
+        }
+        
+        try {
+            System.debug('---- Calling revalidateEditedRows ----');
+            List<form40ImportControllerReDesigned.ImportWrapper> revalidated =
+                form40ImportControllerReDesigned.revalidateEditedRows(
+                    null,   // editedRows
+                    null,   // key
+                    null    // caseId
+                );
+            System.debug('revalidateEditedRows result: ' + revalidated);
+        }
+        catch (Exception ex) {
+            System.debug('ERROR in revalidateEditedRows: ' + ex.getMessage());
+        }
+        
+        try {
+            System.debug('---- Calling saveValidRecords ----');
+            String saveResult =
+                form40ImportControllerReDesigned.saveValidRecords(
+                    null,    // rows
+                    null     // uniqueKey
+                );
+            System.debug('saveValidRecords result: ' + saveResult);
+        }
+        catch (Exception ex) {
+            System.debug('ERROR in saveValidRecords: ' + ex.getMessage());
+        }
+        
+        System.debug('---- All Method Calls Completed ----');
+        
+        form40ImportControllerReDesigned.cancelImport(uniqueKey);
+        form40ImportControllerReDesigned.deleteImports(uniqueKey);
+        
+    }
+    
+    @isTest
+    public static void processIRRDFirst(){
+        
+        String importType = 'Form_40';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        boolean shouldRunSecondBatch = false;
+        Integer NumberofImportRecordsInserted = 0;
+        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        List<DIR_Case__c> queryCase = [SELECT Id, Name, Import_Form_40_Details__c FROM DIR_Case__c];
+        List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Violation_Type__c, Case__c, Assessment__c, Citation_Amount__c,
+                                                    Wages_Due__c, Original_Penalty_Assessment_Amount__c,
+                                                    Total_Interest_Amount__c, Status__c,
+                                                    Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
+                                                    Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
+        
+        Set<Id> setOfCaseIssueIds = new Set<Id>();
+        for(DIR_Violation__c caseIssueId : queriedCaseIssues){
+            setOfCaseIssueIds.add(caseIssueId.Id);
+        }
+        
+        Import__c  imp01 = new Import__c(Unique_Key__c      = 'CSV_Results_TEST_KEY',
+                                         Job_Status__c      = 'Failed',
+                                         Case_Management__c = getCase[0].Id,
+                                         Job_Sequence__c    = null,
+                                         Total_Jobs__c      = 2,
+                                         Error_Message__c   = 'Simulated failure for testing');
+        
+        insert imp01;
+        
+        String contentTitlePattern = 'PayeeRevertData' + uniqueKey + '%';
+        ContentVersion cvinsert = new ContentVersion();
+        cvinsert.Title = 'PayeeRevertData' + uniqueKey + 'BatchCount';
+        cvinsert.VersionData = Blob.valueOf('Test 01');
+        cvinsert.PathOnClient = 'PayeeRevertData' + uniqueKey + 'BatchCount' + '.json';
+        insert cvinsert;
+        
+        
+        ProcessImportRecordsRedesigned batch01 = new ProcessImportRecordsRedesigned();
+        batch01.caseId = getCase[0].Id;
+        batch01.importType = importType;
+        batch01.caseIssueIds = setOfCaseIssueIds;
+        batch01.uniqueKey = uniqueKey;
+        
+        Test.StartTest();
+        Database.executeBatch(batch01, 200);
+        Test.StopTest();
+        
+        ProcessImportRecordsRedesigned batch02 = new ProcessImportRecordsRedesigned();
+        batch02.caseId = getCase[0].Id;
+        batch02.importType = importType;
+        batch02.caseIssueIds = setOfCaseIssueIds;
+        batch02.uniqueKey = uniqueKey;
+        
+        Database.executeBatch(batch02, 200);
+        
+        try {
+            System.debug('---- Calling ProcessImportRecordsRedesigned ----');
+            
+            ProcessImportRecordsRedesigned batch03 = new ProcessImportRecordsRedesigned();
+            batch03.caseId = Null;
+            batch03.importType = Null;
+            batch03.caseIssueIds = Null;
+            batch03.uniqueKey = Null;
+            
+            Database.executeBatch(batch03, 200);
+            
+        }
+        catch (Exception ex) {
+            System.debug('ERROR in ProcessImportRecordsRedesigned: ' + ex.getMessage());
+        }
+        
+    }
+    
+    @isTest
+    public static void processIRRDSecond(){
+        
+        
+        String importType = 'Form_40';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        boolean shouldRunSecondBatch = false;
+        Integer NumberofImportRecordsInserted = 0;
+        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        List<DIR_Case__c> queryCase = [SELECT Id, Name, Import_Form_40_Details__c FROM DIR_Case__c];
+        List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Violation_Type__c, Case__c, Assessment__c, Citation_Amount__c,
+                                                    Wages_Due__c, Original_Penalty_Assessment_Amount__c,
+                                                    Total_Interest_Amount__c, Status__c,
+                                                    Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
+                                                    Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
+        
+        List<Import__c> impList = [
+            SELECT Id
+            FROM Import__c
+            WHERE Case_Management__c = :getCase[0].Id AND (Employee_First_Name__c = null OR Employee_Last_Name__c = null OR Direct_Pay__c = 'Yes')
+        ];
+        delete impList;
+        
+        Set<Id> setOfCaseIssueIds = new Set<Id>();
+        for(DIR_Violation__c caseIssueId : queriedCaseIssues){
+            setOfCaseIssueIds.add(caseIssueId.Id);
+        }
+        
+        String contentTitlePattern = 'PayeeRevertData' + uniqueKey + '%';
+        ContentVersion cvinsert = new ContentVersion();
+        cvinsert.Title = 'PayeeRevertData' + uniqueKey + 'BatchCount';
+        cvinsert.VersionData = Blob.valueOf('Test 01');
+        cvinsert.PathOnClient = 'PayeeRevertData' + uniqueKey + 'BatchCount' + '.json';
+        insert cvinsert;
+        
+        
+        ProcessImportRecordsRedesigned batch = new ProcessImportRecordsRedesigned();
+        batch.caseId = getCase[0].Id;
+        batch.importType = importType;
+        batch.caseIssueIds = setOfCaseIssueIds;
+        batch.uniqueKey = uniqueKey;
+        
+        Test.StartTest();
+        Database.executeBatch(batch, 200);
+        Test.StopTest();
+    }
+    @isTest
+    public static void deletePB(){
+        
+        String importType = 'Form_40';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        boolean shouldRunSecondBatch = false;
+        Integer NumberofImportRecordsInserted = 0;
+        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        List<DIR_Case__c> queryCase = [SELECT Id, Name, Import_Form_40_Details__c FROM DIR_Case__c];
+        List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Violation_Type__c, Case__c, Assessment__c, Citation_Amount__c,
+                                                    Wages_Due__c, Original_Penalty_Assessment_Amount__c,
+                                                    Total_Interest_Amount__c, Status__c,
+                                                    Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
+                                                    Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
+        
+        List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
+        
+        List<Account> getAccountRecords = [SELECT Id FROM Account];
+        List<Case_Role__c> getCaseRoleRecords = [SELECT Id FROM Case_Role__c];
+        List<Payee__c> getPayeeRecords = [SELECT Id FROM Payee__c];
+        
+        Set<Id> accDeleteIds = new Set<Id>();
+        Set<Id> caseRoleDeleteIds = new Set<Id>();
+        Set<Id> payeeDeleteIds = new Set<Id>();
+        
+        for (Account acc : getAccountRecords) {
+            accDeleteIds.add(acc.Id);
+        }
+        
+        for (Case_Role__c cr : getCaseRoleRecords) {
+            caseRoleDeleteIds.add(cr.Id);
+        }
+        
+        for (Payee__c payee : getPayeeRecords) {
+            payeeDeleteIds.add(payee.Id);
+        }
+        
+        Integer successCountPayee = 0;
+        Integer failureCountPayee = 0;
+        Boolean batchError = true;
+        Integer batchRunCount = 2;
+        String allErrorMessages = 'Test Error';
+        String creationErrorTable = 'Test Creation Error Table';
+        String updateerrorTable = 'Test Update Error Table';
+        Map<String, Integer> processSummary = new Map<String, Integer>();
+        
+        Database.executeBatch(
+            new DeletePayeeBatch(
+                accDeleteIds,
+                caseRoleDeleteIds,
+                payeeDeleteIds,
+                getCase[0].Id,
+                importType,
+                insertedAccounts,
+                insertedCaseRoles,
+                insertedPayees,
+                successCountPayee,
+                failureCountPayee,
+                batchError,
+                batchRunCount,
+                NumberofImportRecordsInserted,
+                allErrorMessages,
+                creationErrorTable,
+                updateerrorTable,
+                false,
+                'ProcessImportRecordsRedesigned',
+                failedRecords,
+                processSummary
+            ),
+            200
+        );
+        
+        Database.executeBatch(
+            new DeletePayeeBatch(
+                getCase[0].Id,
+                true
+            ),
+            200
+        );
+    }
+    
+    @isTest
+    public static void RevertPB(){
+        
+        
+        String importType = 'Form_40';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        boolean shouldRunSecondBatch = false;
+        Integer NumberofImportRecordsInserted = 0;
+        
+        
+        String contentTitlePattern = 'PayeeRevertData' + uniqueKey + '%';
+        
+        for(ContentVersion conver : [
+            SELECT Id, VersionData, Title, ContentDocumentId
+            FROM ContentVersion
+            WHERE Title LIKE :contentTitlePattern
+        ]){
+            System.debug('Test ContentVersion RevertPB: '+ conver);
+            System.debug('Test ContentVersion RevertPB: '+ conver.Title);
+            System.debug('Test ContentVersion RevertPB: '+ conver.VersionData);
+        }
+        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        List<DIR_Case__c> queryCase = [SELECT Id, Name, Import_Form_40_Details__c FROM DIR_Case__c];
+        List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Violation_Type__c, Case__c, Assessment__c, Citation_Amount__c,
+                                                    Wages_Due__c, Original_Penalty_Assessment_Amount__c,
+                                                    Total_Interest_Amount__c, Status__c,
+                                                    Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
+                                                    Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
+        
+        List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
+        
+        List<Account> getAccountRecords = [SELECT Id FROM Account];
+        List<Case_Role__c> getCaseRoleRecords = [SELECT Id FROM Case_Role__c];
+        List<Payee__c> getPayeeRecords = [SELECT Id FROM Payee__c];
+        
+        Set<Id> accDeleteIds = new Set<Id>();
+        Set<Id> caseRoleDeleteIds = new Set<Id>();
+        Set<Id> payeeDeleteIds = new Set<Id>();
+        
+        for (Account acc : getAccountRecords) {
+            accDeleteIds.add(acc.Id);
+        }
+        
+        for (Case_Role__c cr : getCaseRoleRecords) {
+            caseRoleDeleteIds.add(cr.Id);
+        }
+        
+        for (Payee__c payee : getPayeeRecords) {
+            payeeDeleteIds.add(payee.Id);
+        }
+        
+        Integer successCountPayee = 0;
+        Integer failureCountPayee = 0;
+        Boolean batchError = true;
+        Integer batchRunCount = 2;
+        String allErrorMessages = 'Test Error';
+        String creationErrorTable = 'Test Creation Error Table';
+        String updateerrorTable = 'Test Update Error Table';
+        Map<String, Integer> processSummary = new Map<String, Integer>();
+        
+        Database.executeBatch(
+            new RevertPayeeBatch(
+                accDeleteIds,
+                caseRoleDeleteIds,
+                payeeDeleteIds,                    
+                getCase[0].Id,
+                importType,
+                insertedAccounts,
+                insertedCaseRoles,
+                insertedPayees,
+                successCountPayee,
+                failureCountPayee,
+                batchError,
+                batchRunCount,
+                NumberofImportRecordsInserted,
+                allErrorMessages,
+                creationErrorTable,
+                updateerrorTable,
+                uniqueKey                
+            ),
+            2
+        );
+        
+        
+        accDeleteIds.clear();
+        
+        Database.executeBatch(
+            new RevertPayeeBatch(
+                accDeleteIds,
+                caseRoleDeleteIds,
+                payeeDeleteIds,                    
+                getCase[0].Id,
+                importType,
+                insertedAccounts,
+                insertedCaseRoles,
+                insertedPayees,
+                successCountPayee,
+                failureCountPayee,
+                batchError,
+                batchRunCount,
+                NumberofImportRecordsInserted,
+                allErrorMessages,
+                creationErrorTable,
+                updateerrorTable,
+                uniqueKey                
+            ),
+            2
+        );  
+        
+    }
+    
+    @isTest
+    public static void batchEmailService(){
+        List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
+        Integer successCountPayee = 0;
+        Integer failureCountPayee = 0;
+        Boolean batchError = true;
+        Integer batchRunCount = 2;
+        String allErrorMessages = 'Test Error';
+        String creationErrorTable = 'Test Creation Error Table';
+        String updateerrorTable = 'Test Update Error Table';
+        Map<String, Integer> processSummary = new Map<String, Integer>();
+        boolean reverted = false;
+        
+        String importType = 'Form_40';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        Integer NumberofImportRecordsInserted = 0;
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        
+        BatchEmailService.sendBatchSummaryEmail(
+            getCase[0].Id,
+            importType,
+            insertedAccounts,
+            insertedCaseRoles,
+            insertedPayees,
+            successCountPayee,
+            failureCountPayee,
+            batchError,
+            batchRunCount,
+            NumberofImportRecordsInserted,
+            allErrorMessages,
+            creationErrorTable,
+            updateerrorTable,
+            processSummary,
+            'ProcessImportRecordsRedesigned',
+            reverted,
+            failedRecords,
+            failedRecords
+        );
+        
+        BatchEmailService.sendDeletionSummaryEmail(
+                getCase[0].Id,
+                'Cleanup',
+                processSummary,
+                'DeletePayeeBatch',
+                failedRecords,
+                failedRecords
+            );
+        
+        reverted = true;
+        
+        processSummary.put('Account_Deleted', 0);
+        processSummary.put('CaseRole_Deleted', 0);
+        processSummary.put('Payee_Deleted', 0);
+        processSummary.put('Account_Failed', 0);
+        processSummary.put('CaseRole_Failed', 0);
+        processSummary.put('Payee_Failed', 0);
+        processSummary.put('Payee_Updated', 0);
+        
+        BatchEmailService.sendBatchSummaryEmail(
+            getCase[0].Id,
+            importType,
+            insertedAccounts,
+            insertedCaseRoles,
+            insertedPayees,
+            successCountPayee,
+            failureCountPayee,
+            batchError,
+            batchRunCount,
+            NumberofImportRecordsInserted,
+            allErrorMessages,
+            creationErrorTable,
+            updateerrorTable,
+            processSummary,
+            'ProcessImportRecordsRedesigned',
+            reverted,
+            failedRecords,
+            failedRecords
+        );
+        
+                BatchEmailService.sendDeletionSummaryEmail(
+                getCase[0].Id,
+                'Cleanup',
+                processSummary,
+                'DeletePayeeBatch',
+                failedRecords,
+                failedRecords
+            );
+        
+        failedRecords.add(new BatchEmailService.WrapperError(
+                            getCase[0].Id,
+                            'Test 001',
+                            'Error Test 001',
+                            'Payee'
+                        ));
+        
+        batchRunCount = 1;
+        batchError = true;
+        reverted = true;
+        
+            BatchEmailService.sendBatchSummaryEmail(
+            getCase[0].Id,
+            importType,
+            insertedAccounts,
+            insertedCaseRoles,
+            insertedPayees,
+            successCountPayee,
+            failureCountPayee,
+            batchError,
+            batchRunCount,
+            NumberofImportRecordsInserted,
+            allErrorMessages,
+            creationErrorTable,
+            updateerrorTable,
+            processSummary,
+            'ProcessImportRecordsRedesigned',
+            reverted,
+            failedRecords,
+            failedRecords
+        );
+        
+                BatchEmailService.sendDeletionSummaryEmail(
+                getCase[0].Id,
+                'Cleanup',
+                processSummary,
+                'DeletePayeeBatch',
+                failedRecords,
+                failedRecords
+            );
+        
+        
+        batchRunCount = 2;
+        batchError = false;
+        reverted = false;
+        
+        BatchEmailService.sendBatchSummaryEmail(
+            getCase[0].Id,
+            importType,
+            insertedAccounts,
+            insertedCaseRoles,
+            insertedPayees,
+            successCountPayee,
+            failureCountPayee,
+            batchError,
+            batchRunCount,
+            NumberofImportRecordsInserted,
+            allErrorMessages,
+            creationErrorTable,
+            updateerrorTable,
+            processSummary,
+            'ProcessImportRecordsRedesigned',
+            reverted,
+            failedRecords,
+            failedRecords
+        );
+        
+                BatchEmailService.sendDeletionSummaryEmail(
+                getCase[0].Id,
+                'Cleanup',
+                processSummary,
+                'DeletePayeeBatch',
+                failedRecords,
+                failedRecords
+            );
+    }
+    
+    @isTest
+    public static void IC_RollUpPB(){
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        Set<Id> caseIds = new Set<Id>();
+        try {
+            caseIds.add(Id.valueOf(getCase[0].Id));
+            
+            Database.executeBatch(new IC_RollUpPayeeBatch(caseIds));
+        } catch (Exception ex) {
+            System.debug('Error while executing IC_RollUpPayeeBatch: ' + ex.getMessage());
+        }
+        try {
+            System.debug('---- Calling IC_RollUpPayeeBatch ----');
+            
+            Database.executeBatch(new IC_RollUpPayeeBatch(null));
+            
+        }
+        catch (Exception ex) {
+            System.debug('ERROR in IC_RollUpPayeeBatch: ' + ex.getMessage());
         }
     }
 }

@@ -1043,15 +1043,18 @@ public static List<ImportWrapper> revalidateEditedRows(
         SELECT Id, MethodName, JobType, ApexClass.Name, Status
         FROM AsyncApexJob
         WHERE
-          (ApexClass.Name = 'ProcessImportRecordsRedesigned'
-          OR ApexClass.Name = 'ProcessDuplicatePayeesBatch')
+          ApexClass.Name = 'ProcessImportRecordsRedesigned'
           AND CreatedById = :UserInfo.getUserId()
         ORDER BY CreatedDate DESC
         LIMIT 1
       ];
       if (!jobLIst.isEmpty()) {
         system.Debug('JOb Found ' + jobLIst.size() + jobLIst[0].Status);
-        if (jobLIst[0].Status != 'Completed') {
+        if (
+          jobLIst[0].Status != 'Completed' &&
+          jobLIst[0].Status != 'Aborted' &&
+          jobLIst[0].Status != 'Failed'
+        ) {
           return 'Payee processing is in progress. A confirmation email will be sent when it is complete.';
         }
       }

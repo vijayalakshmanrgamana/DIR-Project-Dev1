@@ -52,7 +52,7 @@ public without sharing class ProcessDuplicatePayeesService {
                 SELECT Id, Name, Payee_Name__c, Case_Role__c,
                 Case_Role__r.Entity__r.AccountMatch__c, Payee_Association_JSON__c, Direct_Pay__c,
                 NetWages__c, WageAssessment__c, TotalDeductions__c, Factor__c,
-                Post_Judgment_Interest_for_Wages__c, Post_Citation_Interest_for_Wages__c
+                Post_Judgment_Interest_for_Wages__c, Post_Citation_Interest_for_Wages__c, PeriodCovered__c
                 FROM Payee__c
                 WHERE Case_Management__c = :caseId
                 AND Case_Role__r.Entity__r.AccountMatch__c IN :chinkedMatchingKeys
@@ -63,8 +63,6 @@ public without sharing class ProcessDuplicatePayeesService {
                     matchedPayeesMap.put(p.Case_Role__r.Entity__r.AccountMatch__c.toLowerCase(), p);
                 }
             }
-            
-            //Map<Id, Payee__c> payeeUpdateMap = new Map<Id, Payee__c>(matchedPayeesMap.values());
             
             // 3. Process Imports and Update Payees
             for (Import__c imp : importRecords) {
@@ -78,7 +76,6 @@ public without sharing class ProcessDuplicatePayeesService {
                     imp, 
                     matchedPayee, 
                     caseIssueList, 
-                    //payeeUpdateMap, 
                     result
                 );
             }
@@ -103,7 +100,6 @@ public without sharing class ProcessDuplicatePayeesService {
         Import__c imp, 
         Payee__c matchedPayee, 
         List<DIR_Violation__c> caseIssueList, 
-        //Map<Id, Payee__c> payeeUpdateMap, 
         PayeeProcessingResult result
     ) {
         result.oldPayeeRecords.add(matchedPayee);
@@ -144,17 +140,12 @@ public without sharing class ProcessDuplicatePayeesService {
         payee.TotalDeductions__c = sumOfDeductionsTotal(associationMap.values());
         payee.Factor__c = imp.Factor__c;
         payee.Direct_Pay__c = imp.Direct_Pay__c;
-        
-        // Accumulated Interest fields from the payeeUpdateMap
-        //if (payeeUpdateMap.containsKey(matchedPayee.Id)) {
-        //    Payee__c updatedPayeeState = payeeUpdateMap.get(matchedPayee.Id);
-        //    payee.Post_Citation_Interest_for_Wages__c = updatedPayeeState.Post_Citation_Interest_for_Wages__c;
-        //    payee.Post_Judgment_Interest_for_Wages__c = updatedPayeeState.Post_Judgment_Interest_for_Wages__c;
-        // }
-        
+        payee.PeriodCovered__c = imp.Period_Covered_by_Adjustment__c;
         result.updatePayeeRecords.add(payee);
         result.payeeToImportMap.put(payee.Id, imp);
         System.debug('>>> [processSingleImport] Prepared Payee Update: ' + payee);
+        System.debug('>>> [processSingleImport] Prepared payee.PeriodCovered__c Update: ' + payee.PeriodCovered__c);
+
     }
     
     // --- Private Static Helper Methods (Kept from previous version) ---
@@ -165,7 +156,6 @@ public without sharing class ProcessDuplicatePayeesService {
         Import__c imp, 
         Id payeeId, 
         Integer totalCaseIssues 
-        // Map<Id, Payee__c> payeeUpdateMap
     ) {
         // ... (Implementation remains the same) ...
         System.debug('>>> [assignAssociation] Start for CaseIssue: ' + caseIssue.Id + ' | Payee: ' + payeeId);
@@ -175,45 +165,24 @@ public without sharing class ProcessDuplicatePayeesService {
         association.factor = imp.Factor__c;
         association.citationForm = caseIssue.Violation_Type__r.Violation_Type__c;
         association.violationTypeName = caseIssue.Violation_Type__r.Violation_Type_Name__c;
-		//association.isPartial = importType == 'Form_40_Partial' ? true :false; 
         
         Decimal NWBreakdown = (imp.Net_Wages_Paid__c == null) ? 0 : imp.Net_Wages_Paid__c / totalCaseIssues;
         Decimal TNWBreakdown = (imp.Total_Wage_Assessment__c == null) ? 0 : imp.Total_Wage_Assessment__c / totalCaseIssues;
         Decimal DTBreakdown = (imp.Deductions_Total__c == null) ? 0 : imp.Deductions_Total__c / totalCaseIssues;
         
         if((importType == 'Form_40_Partial' || importType == 'Form_40') && association.isPartial == true){
-       association.caseIssueBreakdown+= NWBreakdown.setScale(6, RoundingMode.HALF_UP);
-        association.netWagesBreakdown+= NWBreakdown.setScale(6, RoundingMode.HALF_UP);
-        association.totalWageAssessmentBreakdown+= TNWBreakdown.setScale(6, RoundingMode.HALF_UP);
-        association.deductionsTotalBreakdown+= DTBreakdown.setScale(6, RoundingMode.HALF_UP);
-        
+            association.caseIssueBreakdown+= NWBreakdown.setScale(6, RoundingMode.HALF_UP);
+            association.netWagesBreakdown+= NWBreakdown.setScale(6, RoundingMode.HALF_UP);
+            association.totalWageAssessmentBreakdown+= TNWBreakdown.setScale(6, RoundingMode.HALF_UP);
+            association.deductionsTotalBreakdown+= DTBreakdown.setScale(6, RoundingMode.HALF_UP);
+            
         }else{
             association.caseIssueBreakdown = NWBreakdown.setScale(6, RoundingMode.HALF_UP);
-        association.netWagesBreakdown = NWBreakdown.setScale(6, RoundingMode.HALF_UP);
-        association.totalWageAssessmentBreakdown = TNWBreakdown.setScale(6, RoundingMode.HALF_UP);
-        association.deductionsTotalBreakdown = DTBreakdown.setScale(6, RoundingMode.HALF_UP);
-        
+            association.netWagesBreakdown = NWBreakdown.setScale(6, RoundingMode.HALF_UP);
+            association.totalWageAssessmentBreakdown = TNWBreakdown.setScale(6, RoundingMode.HALF_UP);
+            association.deductionsTotalBreakdown = DTBreakdown.setScale(6, RoundingMode.HALF_UP);
+            
         }
-        
-        
-        /*
-Decimal percentageshare = imp.Factor__c == null ? 0 : imp.Factor__c;
-Decimal pcinterestShare = (caseIssue.Post_Citation_Interest_for_Wages__c != null ? caseIssue.Post_Citation_Interest_for_Wages__c : 0) * percentageshare;
-Decimal pjinterestShare = (caseIssue.Post_Judgment_Interest_for_Wages__c != null ? caseIssue.Post_Judgment_Interest_for_Wages__c : 0) * percentageshare;
-
-Payee__c currentPayeeState = payeeUpdateMap.get(payeeId);
-Decimal currentCitation = currentPayeeState.Post_Citation_Interest_for_Wages__c != null ? currentPayeeState.Post_Citation_Interest_for_Wages__c : 0;
-Decimal currentJudgment = currentPayeeState.Post_Judgment_Interest_for_Wages__c != null ? currentPayeeState.Post_Judgment_Interest_for_Wages__c : 0;
-
-Decimal totalCitation = currentCitation + pcinterestShare;
-Decimal totalJudgment = currentJudgment + pjinterestShare;
-
-currentPayeeState.Post_Citation_Interest_for_Wages__c = totalCitation;
-currentPayeeState.Post_Judgment_Interest_for_Wages__c = totalJudgment;
-payeeUpdateMap.put(payeeId, currentPayeeState);
-
-System.debug('>>> [assignAssociation] Updated Payee Interest - Citation: ' + totalCitation + ' | Judgment: ' + totalJudgment);
-*/
     }
     
     private static Decimal sumOfTotalWageAssessment(List<PayeeAssociation> associations) {

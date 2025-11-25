@@ -49,7 +49,7 @@ public with sharing class BatchEmailService {
             '<p style="color: #777; font-size: 12px; margin: 0;">' +
             '<b>Executed by:</b> ' + UserInfo.getName() + '<br/>' +
             '<b>DateTime:</b> ' + System.now().format('MM/dd/yyyy h:mm a', UserInfo.getTimeZone().getId()) + '<br/>' +
-             '<b>Last Batch:</b> ' + batchName +
+            '<b>Last Batch:</b> ' + batchName +
             '</p></div>';
         
         // Transaction Revert
@@ -113,14 +113,14 @@ public with sharing class BatchEmailService {
             htmlBody +=   
                 '<tr><td>🧾 <b>Accounts Deleted:</b></td><td>' + processSummary.get('Account_Deleted') + '</td></tr>' +
                 '<tr><td>⚠️ <b>Accounts Failed:</b></td><td>' + processSummary.get('Account_Failed') + '</td></tr>' +
-                '<tr><td>🧾 <b>Case Roles Deleted:</b></td><td>' + processSummary.get('CaseRole_Deleted') + '</td></tr>' +
-                '<tr><td>⚠️ <b>Case Roles Failed:</b></td><td>' + processSummary.get('CaseRole_Failed') + '</td></tr>' +
+                '<tr><td>🧾 <b>Case Roles Deleted:</b></td><td>' + processSummary.get('Account_Deleted') + '</td></tr>' +
+                '<tr><td>⚠️ <b>Case Roles Failed:</b></td><td>' + processSummary.get('Account_Failed') + '</td></tr>' +
                 '<tr><td>🧾 <b>Payees Deleted:</b></td><td>' + processSummary.get('Payee_Deleted') + '</td></tr>' +
                 '<tr><td>⚠️ <b>Payees Failed:</b></td><td>' + processSummary.get('Payee_Failed') + '</td></tr>';
         }
         if(reverted == false && !failedRecordsRevert.isEmpty()){
             htmlBody +=  '<tr><td>🧾 <b>Payees Updated:</b></td><td>' + String.valueOf(processSummary.get('Payee_Updated')) + '</td></tr>' +
-                '<tr><td>⚠️ <b>Payees Failed:</b></td><td>' + String.valueOf(processSummary.get('Payee_Failed')) + '</td></tr>';
+                '<tr><td>⚠️ <b>Payees Failed:</b></td><td>' + String.valueOf(processSummary.get('Payee_Updated_Failed')) + '</td></tr>';
         }        
         
         htmlBody += '</table></div><br/>';
@@ -180,7 +180,7 @@ public with sharing class BatchEmailService {
                 'Please manually delete these records (or remove them using a query) before re-uploading the corrected data. After cleanup, you can re-upload' +
                 '</div>';
         }
-         
+        
         
         // ⚠️ Failed Records Table
         if (!failedRecordsDelete.isEmpty() && reverted == false) {
@@ -287,6 +287,159 @@ public with sharing class BatchEmailService {
                 System.debug('Case update failed: ' + error.getMessage());
             }
         }
+    }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    public static void sendDeletionSummaryEmail(
+        Id caseId,
+        String importType,
+        Map<String, Integer> processSummary,
+        String batchName,
+        List<WrapperError> failedRecordsDelete,
+        List<WrapperError> failedCaseIssueRecordsUpdate
+    ) {
+        
+        // --- Get Case Details ---
+        DIR_Case__c dc = [
+            SELECT Id, Case_Number__c
+            FROM DIR_Case__c
+            WHERE Id = :caseId
+            LIMIT 1
+        ];
+        
+        String baseUrl = System.Url.getOrgDomainUrl().toExternalForm();
+        String caseLink = '<a href="' + baseUrl + '/lightning/r/DIR_Case__c/' + dc.Id +
+            '/view" target="_blank" style="color:#0176D3; text-decoration:none;">' +
+            escapeHtml(dc.Case_Number__c) + '</a>';
+        
+        // --- Begin HTML ---
+        String htmlBody = '';
+        htmlBody += '<html><head><meta charset="UTF-8"></head>';
+        htmlBody += '<body style="font-family:Arial, sans-serif; font-size:14px; padding:15px; color:#333; line-height:1.5;">';
+        
+        // Header Section
+        htmlBody +=
+            '<div style="background-color:#F9F9F9; padding:12px; border-radius:6px; border:1px solid #EEE; margin-bottom:20px;">' +
+            '<p style="font-size:12px; color:#777; margin:0;">' +
+            '<b>Executed by:</b> ' + UserInfo.getName() + '<br/>' +
+            '<b>DateTime:</b> ' + System.now().format('MM/dd/yyyy h:mm a', UserInfo.getTimeZone().getId()) + '<br/>' +
+            '<b>Last Batch:</b> ' + escapeHtml(batchName) +
+            '</p>' +
+            '</div>';
+        
+        // Title
+        htmlBody += '<h2 style="color:#2E86C1; margin-top:0;">Deletion Cleanup Summary</h2>';
+        
+        // Summary Table
+        htmlBody +=
+            '<h3 style="color:#2E86C1;">Process Summary</h3>' +
+            '<table border="0" cellpadding="6" cellspacing="0" style="width:100%; max-width:500px; border-collapse:collapse;">' +
+            '<tr><td style="width:40%;"><b>Case Management:</b></td><td>' + caseLink + '</td></tr>' +
+            '<tr><td><b>Import Type:</b></td><td>' + escapeHtml(importType) + '</td></tr>' +
+            '</table><br/>';
+        
+        // Deleted Count Box
+        htmlBody +=
+            '<div style="border:2px solid #0176D3; padding:15px; border-radius:6px; background-color:#F8F9F9; max-width:470px;">' +
+            '<h4 style="margin-top:0; color:#0176D3;">Record Deletion Results</h4>' +
+            '<table border="0" cellpadding="6" cellspacing="0" style="width:100%; border-collapse:collapse;">' +
+            '<tr><td><b>🧾 Accounts Deleted:</b></td><td>' + processSummary.get('Account_Deleted') + '</td></tr>' +
+            '<tr><td><b>⚠️ Accounts Failed:</b></td><td>' + processSummary.get('Account_Failed') + '</td></tr>' +
+            '<tr><td><b>🧾 Case Roles Deleted:</b></td><td>' + processSummary.get('Account_Deleted') + '</td></tr>' +
+            '<tr><td><b>⚠️ Case Roles Failed:</b></td><td>' + processSummary.get('Account_Failed') + '</td></tr>' +
+            '<tr><td><b>🧾 Payees Deleted:</b></td><td>' + processSummary.get('Payee_Deleted') + '</td></tr>' +
+            '<tr><td><b>⚠️ Payees Failed:</b></td><td>' + processSummary.get('Payee_Failed') + '</td></tr>' +
+            '<tr><td><b>🧾 Case Issues Update:</b></td><td>' + processSummary.get('CaseIssue_Updated') + '</td></tr>' +
+            '<tr><td><b>⚠️ Case Issues Failed:</b></td><td>' + processSummary.get('CaseIssue_Failed') + '</td></tr>' +
+            '</table>' +
+            '</div><br/>';
+
+        
+        // Failed Deletion Records Table
+        if (!failedRecordsDelete.isEmpty()) {
+            htmlBody +=
+            '<div style="background-color:#fff3cd; border:1px solid #ffeeba; padding:12px 15px; border-radius:6px; margin-bottom:15px; color:#856404;">' +
+            '<b>⚠️ Note:</b> Some records could not be deleted automatically due to validation or system errors. ' +
+            'Please review the failed deletion details below and clean the data manually before re-uploading.' +
+            '</div>';
+            
+            htmlBody +=
+                '<h4 style="color:#E67E22; margin-bottom:5px;">⚠️ Failed Deletion Record Details</h4>' +
+                '<div style="border:1px solid #FFD700; background-color:#FFFACD; padding:10px;">' +
+                '<table border="1" cellpadding="6" cellspacing="0" style="width:100%; border-collapse:collapse;">' +
+                '<tr style="background-color:#F2F3F4;">' +
+                '<th align="left">Object Type</th>' +
+                '<th align="left">Record Id</th>' +
+                '<th align="left">Name</th>' +
+                '<th align="left">Error Message</th>' +
+                '</tr>';
+            
+            for (WrapperError err : failedRecordsDelete) {
+                htmlBody += '<tr>' +
+                    '<td>' + escapeHtml(err.objectType) + '</td>' +
+                    '<td>' + (err.recordId != null ? err.recordId : '-') + '</td>' +
+                    '<td>' + (err.name != null ? escapeHtml(err.name) : '-') + '</td>' +
+                    '<td style="color:red;">' + escapeHtml(err.errorMsg) + '</td>' +
+                    '</tr>';
+            }
+            
+            htmlBody += '</table></div><br/>';
+        }
+        
+        // Failed Case Issue Update Records Table
+if (!failedCaseIssueRecordsUpdate.isEmpty()) {
+
+    // Note message
+    htmlBody +=
+    '<div style="background-color:#fff3cd; border:1px solid #ffeeba; padding:12px 15px; border-radius:6px; margin-bottom:15px; color:#856404;">' +
+    '<b>⚠️ Note:</b> Some case issue updates could not be processed automatically due to validation or system errors. ' +
+    'Please review the failed update details below and correct the data manually if needed before retrying.' +
+    '</div>';
+
+    // Failed records table
+    htmlBody +=
+        '<h4 style="color:#E67E22; margin-bottom:5px;">⚠️ Failed Case Issue Update Details</h4>' +
+        '<div style="border:1px solid #FFD700; background-color:#FFFACD; padding:10px;">' +
+        '<table border="1" cellpadding="6" cellspacing="0" style="width:100%; border-collapse:collapse;">' +
+        '<tr style="background-color:#F2F3F4;">' +
+        '<th align="left">Object Type</th>' +
+        '<th align="left">Record Id</th>' +
+        '<th align="left">Name</th>' +
+        '<th align="left">Error Message</th>' +
+        '</tr>';
+
+    for (BatchEmailService.WrapperError err : failedCaseIssueRecordsUpdate) {
+        htmlBody += '<tr>' +
+            '<td>' + escapeHtml(err.objectType) + '</td>' +
+            '<td>' + (err.recordId != null ? err.recordId : '-') + '</td>' +
+            '<td>' + (err.name != null ? escapeHtml(err.name) : '-') + '</td>' +
+            '<td style="color:red;">' + escapeHtml(err.errorMsg) + '</td>' +
+            '</tr>';
+    }
+
+    htmlBody += '</table></div><br/>';
+}
+
+        
+        htmlBody += '</body></html>';
+        
+        // --- Send Email ---
+        User u = [SELECT Email FROM User WHERE Id = :UserInfo.getUserId()];
+        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+        mail.setToAddresses(new String[]{ u.Email });
+        mail.setSubject('Apex Batch Job Completed - The deletion cleanup process has completed…');
+        mail.setHtmlBody(htmlBody);
+        mail.setCharset('UTF-8');
+        
+        Messaging.sendEmail(new Messaging.SingleEmailMessage[]{ mail });
     }
     
     // --- HTML escaping utility ---

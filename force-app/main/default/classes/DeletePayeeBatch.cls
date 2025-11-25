@@ -19,6 +19,9 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
     public Boolean reverted;
     public String batchName;
     public List<BatchEmailService.WrapperError> failedRecordsRevert;
+    public Boolean clean = false;
+    public List<DIR_Violation__c> caseIssueList;
+    
     // Summary Map
     Map<String, Integer> processSummary = new Map<String, Integer>{
         'Account_Deleted' => 0,
@@ -81,44 +84,103 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
         
     }
     
+    public DeletePayeeBatch(Id caseId, boolean clean){
+        this.caseId = caseId;
+        this.clean = clean;
+        
+        this.payeeIds = new Set<Id>();
+        this.accountIds = new Set<Id>();
+        this.caseRoleIds = new Set<Id>();
+        this.failedRecordsRevert = new List<BatchEmailService.WrapperError>();
+        
+        this.insertedAccounts = 0;
+        this.insertedCaseRoles = 0;
+        this.insertedPayees = 0;
+        this.successCountPayee = 0;
+        this.failureCountPayee = 0;
+        this.batchError = false;
+        this.batchRunCount = 0;
+        this.numberOfImportRecordsInserted = 0;
+        this.allErrorMessages = '';
+        this.creationErrorTable ='';
+        this.updateerrorTable ='';
+        this.reverted = false;
+        this.batchName = '';
+
+        caseIssueList = [
+            SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, 
+            Amount_Utilized_from_Payee__c,
+            Violation_Type__r.Violation_Type_Name__c, 
+            Violation_Type__r.Violation_Type__c, 
+            Post_Judgment_Interest_for_Wages__c, 
+            Post_Citation_Interest_for_Wages__c
+            FROM DIR_Violation__c
+            WHERE Case__c = :caseId
+        ];
+    }
+
+    
     // Batch Start
     public Database.QueryLocator start(Database.BatchableContext bc) {
         // Query Accounts for deletion
-        return Database.getQueryLocator([
-            SELECT Id, Name FROM Account WHERE Id IN :accountIds
-        ]);
+        if(!clean){
+            return Database.getQueryLocator([
+                SELECT Id, Name FROM Payee__c WHERE Id IN :payeeIds
+            ]);
+        }
+        else{
+            return Database.getQueryLocator([
+                SELECT Id, Name FROM Payee__c WHERE Case_Management__c = :caseId
+            ]);
+        }
     }
     
     // Batch Execute
-    public void execute(Database.BatchableContext bc, List<SObject> scope) {
+    public void execute(Database.BatchableContext bc, List<Payee__c> scope) {
         try {
-            // --- Delete Case Roles ---
-            if (!caseRoleIds.isEmpty()) {
-                List<Case_Role__c> caseRoleList = [
-                    SELECT Id, Name FROM Case_Role__c WHERE Id IN :caseRoleIds LIMIT 200
+            
+            // Get Payee Ids
+            Set<Id> scopeIds = new Set<Id>();
+            for (Payee__c p : scope) {
+                scopeIds.add(p.Id);
+            }
+            
+            // Get Account record IDs that are linked to Payee records
+            
+            Set<Id> accIds = new Set<Id>();
+            
+            // --- Delete Payees ---
+            if (!scopeIds.isEmpty()) {
+                List<Payee__c> payeeList = [
+                    SELECT Id, Name, Case_Role__r.Entity__c FROM Payee__c WHERE Id IN :scopeIds
                 ];
-                List<Database.DeleteResult> caseRoleResults = Database.delete(caseRoleList, false);
                 
-                for (Integer i = 0; i < caseRoleResults.size(); i++) {
-                    if (caseRoleResults[i].isSuccess()) {
-                        processSummary.put('CaseRole_Deleted', processSummary.get('CaseRole_Deleted') + 1);
+                for(Payee__c payee : payeeList){
+                    accIds.add(payee.Case_Role__r.Entity__c);
+                }
+                
+                List<Database.DeleteResult> payeeResults = Database.delete(payeeList, false);
+                
+                for (Integer i = 0; i < payeeResults.size(); i++) {
+                    if (payeeResults[i].isSuccess()) {
+                        processSummary.put('Payee_Deleted', processSummary.get('Payee_Deleted') + 1);
                     } else {
-                        processSummary.put('CaseRole_Failed', processSummary.get('CaseRole_Failed') + 1);
-                        Database.Error err = caseRoleResults[i].getErrors()[0];
+                        processSummary.put('Payee_Failed', processSummary.get('Payee_Failed') + 1);
+                        Database.Error err = payeeResults[i].getErrors()[0];
                         failedRecordsDelete.add(new BatchEmailService.WrapperError(
-                            caseRoleList[i].Id,
-                            caseRoleList[i].Name,
+                            payeeList[i].Id,
+                            payeeList[i].Name,
                             err.getMessage(),
-                            'Case Role'
+                            'Payee'
                         ));
                     }
                 }
             }
             
             // --- Delete Accounts ---
-            if (!accountIds.isEmpty()) {
+            if (!accIds.isEmpty()) {
                 List<Account> accList = [
-                    SELECT Id, Name FROM Account WHERE Id IN :accountIds LIMIT 200
+                    SELECT Id, Name FROM Account WHERE Id IN :accIds
                 ];
                 List<Database.DeleteResult> accDeleteResults = Database.delete(accList, false);
                 
@@ -133,29 +195,6 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                             accList[i].Name,
                             err.getMessage(),
                             'Account'
-                        ));
-                    }
-                }
-            }
-            
-            // --- Delete Payees ---
-            if (!payeeIds.isEmpty()) {
-                List<Payee__c> payeeList = [
-                    SELECT Id, Name FROM Payee__c WHERE Id IN :payeeIds LIMIT 200
-                ];
-                List<Database.DeleteResult> payeeResults = Database.delete(payeeList, false);
-                
-                for (Integer i = 0; i < payeeResults.size(); i++) {
-                    if (payeeResults[i].isSuccess()) {
-                        processSummary.put('Payee_Deleted', processSummary.get('Payee_Deleted') + 1);
-                    } else {
-                        processSummary.put('Payee_Failed', processSummary.get('Payee_Failed') + 1);
-                        Database.Error err = payeeResults[i].getErrors()[0];
-                        failedRecordsDelete.add(new BatchEmailService.WrapperError(
-                            payeeList[i].Id,
-                            payeeList[i].Name,
-                            err.getMessage(),
-                            'Payee'
                         ));
                     }
                 }
@@ -202,26 +241,86 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
         }
         
         
-        // Send summary email using BatchEmailService
-        BatchEmailService.sendBatchSummaryEmail(
-            caseId,
-            importType,
-            insertedAccounts,
-            insertedCaseRoles,
-            insertedPayees,
-            successCountPayee,
-            failureCountPayee,
-            batchError,
-            batchRunCount,
-            numberOfImportRecordsInserted,
-            allErrorMessages,
-            creationErrorTable,
-            updateerrorTable,
-            processSummary,
-            'DeletePayeeBatch',
-            reverted,
-            failedRecordsDelete,
-            failedRecordsRevert
-        );
+        if(!clean){
+            // Send summary email using BatchEmailService
+            BatchEmailService.sendBatchSummaryEmail(
+                caseId,
+                importType,
+                insertedAccounts,
+                insertedCaseRoles,
+                insertedPayees,
+                successCountPayee,
+                failureCountPayee,
+                batchError,
+                batchRunCount,
+                numberOfImportRecordsInserted,
+                allErrorMessages,
+                creationErrorTable,
+                updateerrorTable,
+                processSummary,
+                'DeletePayeeBatch',
+                reverted,
+                failedRecordsDelete,
+                failedRecordsRevert
+            );
+        }
+        else{
+            List<BatchEmailService.WrapperError> failedCaseIssueRecordsUpdate = new List<BatchEmailService.WrapperError>();
+            if (!processSummary.containsKey('CaseIssue_Updated')) {
+                processSummary.put('CaseIssue_Updated', 0);
+            }
+            if (!processSummary.containsKey('CaseIssue_Failed')) {
+                processSummary.put('CaseIssue_Failed', 0);
+            }
+            
+            List<DIR_Violation__c> caseIssueUpdate = new List<DIR_Violation__c>();
+            
+            for (DIR_Violation__c ci : caseIssueList) {
+                DIR_Violation__c caseIssue = new DIR_Violation__c();
+                caseIssue.Id = ci.Id;
+                caseIssue.Amount_Utilized_from_Payee__c = 0;
+                caseIssueUpdate.add(caseIssue);
+            }
+            // --- Update Case Issues ---
+            List<Database.SaveResult> updateCaseIssueResults = Database.update(caseIssueUpdate, false);
+            
+            for (Integer i = 0; i < updateCaseIssueResults.size(); i++) {
+                Database.SaveResult sr = updateCaseIssueResults[i];
+                if (sr.isSuccess()) {
+                    // Increment success count
+                    processSummary.put('CaseIssue_Updated', processSummary.get('CaseIssue_Updated') + 1);
+                } else {
+                    // Increment failure count
+                    processSummary.put('CaseIssue_Failed', processSummary.get('CaseIssue_Failed') + 1);
+                    
+                    // Get the first error
+                    Database.Error err = sr.getErrors()[0];
+                    
+                    DIR_Violation__c originalRecord = caseIssueList[i];
+                    
+                    // Store the failed record details
+                    failedCaseIssueRecordsUpdate.add(new BatchEmailService.WrapperError(
+                        originalRecord.Id, // Record Id
+                        originalRecord.Name, // Record Name/Key Field
+                        err.getMessage(), // Error Message
+                        'DIR_Violation' // Object Type
+                    ));
+                }
+            }
+            
+            System.debug(processSummary.get('CaseIssue_Updated') + ' Case Issue records updated from Delete PayeeBatch');
+            System.debug(processSummary.get('CaseIssue_Failed') + ' Case Issue records failed to update from Delete PayeeBatch');
+            System.debug('Failed updates: ' + failedCaseIssueRecordsUpdate);
+            
+            
+            BatchEmailService.sendDeletionSummaryEmail(
+                caseId,
+                'Cleanup',
+                processSummary,
+                'DeletePayeeBatch',
+                failedRecordsDelete,
+                failedCaseIssueRecordsUpdate
+            );
+        }
     }
 }

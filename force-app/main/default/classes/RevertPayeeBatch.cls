@@ -28,7 +28,7 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
     
     private Map<String, Integer> processSummary = new Map<String, Integer> {
         'Payee_Updated' => 0,
-            'Payee_Failed' => 0
+            'Payee_Updated_Failed' => 0
             };
                 private List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
     private List<BatchEmailService.WrapperError> failedRecordsRevert = new List<BatchEmailService.WrapperError>();
@@ -164,7 +164,7 @@ public class RevertPayeeBatch implements Database.Batchable<SObject>, Database.S
                     if (results[i].isSuccess()) {
                         processSummary.put('Payee_Updated', processSummary.get('Payee_Updated') + 1);
                     } else {
-                        processSummary.put('Payee_Failed', processSummary.get('Payee_Failed') + 1);
+                        processSummary.put('Payee_Updated_Failed', processSummary.get('Payee_Updated_Failed') + 1);
                         Database.Error err = results[i].getErrors()[0];
                         Payee__c failedRec = updates[i];
                         

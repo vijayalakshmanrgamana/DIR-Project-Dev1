@@ -14,8 +14,8 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
     global boolean batchError = false;
     global String creationErrorTable = ''; 
     global String updateerrorTable = '';    
-    public Boolean isLinkedToAllCaseIssue { get; set; }
-    public Boolean duplicatePayees = false;
+    global Boolean duplicatePayees = false;
+    global List<DIR_Violation__c> caseIssueList;
     
     // Counters for DML summary (Stateful)
     global Integer insertedAccounts     = 0;
@@ -28,14 +28,13 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
     global Integer NumberofImportRecordsInserted = 0;
     global Integer insertPayeeFiles = 0;
     
-    // Update the Case Issue Records
-    Map<Id, Decimal> caseIssueAmountUtilizedFromPayee = new Map<Id, Decimal>();
-    
     // To Store account, case Role, Payee Ids and imports Record for Delete
     global Integer batchRunCount = 0;
     global Set<Id> accDeleteIds = new Set<Id>();
     global Set<Id> caseRoleDeleteIds = new Set<Id>();
     global Set<Id> payeeDeleteIds = new Set<Id>();
+    
+    
     
     // --- Constructor --- 
     public ProcessImportRecordsRedesigned() {
@@ -47,16 +46,13 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
     // --- Start Method ---
     global Database.QueryLocator start(Database.BatchableContext BC) {
         
-        
-        AggregateResult[] agr = [
-            SELECT COUNT(Id) caseIssueCount 
-            FROM DIR_VIolation__c 
-            WHERE Case__c = : caseId
+        // Fetch Case Issues
+        caseIssueList = [
+            SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, Amount_Utilized_from_Payee__c,
+            Violation_Type__r.Violation_Type_Name__c, Violation_Type__r.Violation_Type__c, Post_Judgment_Interest_for_Wages__c, Post_Citation_Interest_for_Wages__c
+            FROM DIR_Violation__c
+            WHERE Id IN :caseIssueIds
         ];
-        
-        Integer caseIssueCount = (Integer) agr[0].get('caseIssueCount');
-        isLinkedToAllCaseIssue = (caseIssueCount == caseIssueIds.size());
-        
         
         return Database.getQueryLocator([
             SELECT Name, Case_Management__c, Deductions_Total__c, Employee_City__c,
@@ -71,7 +67,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
     }
     
     // --- Execute Method ---
-    global void execute(Database.BatchableContext BC, List<sObject> scope) {
+    global void execute(Database.BatchableContext BC, List<Import__c> scope) {
         if (batchError) {
             System.debug('Batch stop flag is set. Skipping remaining records.');
             return;
@@ -87,14 +83,6 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
         Map<String, recordWrapper> accPayeeMap = new Map<String, recordWrapper>();
         List<Payee__c> createPayeeList         = new List<Payee__c>();
         List<Case_Role__c> createCaseRoleList  = new List<Case_Role__c>();
-        
-        // Fetch Case Issues
-        List<DIR_Violation__c> caseIssueList = [
-            SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, Amount_Utilized_from_Payee__c,
-            Violation_Type__r.Violation_Type_Name__c, Violation_Type__r.Violation_Type__c, Post_Judgment_Interest_for_Wages__c, Post_Citation_Interest_for_Wages__c
-            FROM DIR_Violation__c
-            WHERE Id IN :caseIssueIds
-        ];
         
         Id personAccRTID = Schema.SObjectType.Account.getRecordTypeInfosByName().get('Person Account').getRecordTypeId();
         
@@ -167,7 +155,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                 List<Payee__c> payeesToUpdate = processorResult.updatePayeeRecords;
                 Map<Id, Import__c> payeeToImportMap = processorResult.payeeToImportMap;
                 List<Payee__c> oldPayeeRecords = processorResult.oldPayeeRecords;
-               
+                
                 
                 // 3. Perform DML operation with the results
                 if (!payeesToUpdate.isEmpty()) {
@@ -236,7 +224,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                             cv.VersionData = Blob.valueOf(serializedData);
                             
                             List<ContentVersion> cvList = new List<ContentVersion>{ cv };
-                            List<Database.SaveResult> cvResults = Database.insert(cvList, false);
+                                List<Database.SaveResult> cvResults = Database.insert(cvList, false);
                             
                             for (Integer i = 0; i < cvResults.size(); i++) {
                                 if (cvResults[i].isSuccess()) {
@@ -247,7 +235,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                                     }
                                 }
                             }
-
+                            
                             
                         } 
                     } catch (Exception e) {
@@ -329,9 +317,6 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                 
                 if (accP != null) {
                     
-                    Decimal totalCitation = 0;
-                    Decimal totalJudgment = 0;
-                    
                     Payee__c payee = new Payee__c();
                     payee.PeriodCovered__c = accP.periodCovered;
                     
@@ -365,7 +350,7 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                         associationData.citationForm          = ci.Violation_Type__r.Violation_Type__c;
                         associationData.violationTypeName     = ci.Violation_Type__r.Violation_Type_Name__c;
                         associationData.isPartial = importType == 'Form_40_Partial' ? true :false; 
-
+                        
                         
                         Decimal NWBreakdown   = String.isEmpty(accP.netWages) ? 0 : toDecimal(accP.netWages) / caseIssueList.Size();
                         Decimal TNWBreakdown  = String.isEmpty(accP.wageAsssesment) ? 0 : toDecimal(accP.wageAsssesment) / caseIssueList.Size();
@@ -377,46 +362,10 @@ global class ProcessImportRecordsRedesigned implements Database.Batchable<SObjec
                         associationData.totalWageAssessmentBreakdown = TNWBreakdown.setScale(6, RoundingMode.HALF_UP);
                         associationData.deductionsTotalBreakdown     = DTBreakdown.setScale(6, RoundingMode.HALF_UP);
                         
-                        
-                        Decimal wageBalanceDue = (ci.Wage_Balance_Due__c != null) ? ci.Wage_Balance_Due__c : 0;
-                        Decimal amountReserved = (ci.Amount_Reserved__c != null) ? ci.Amount_Reserved__c : 0;
-                        Decimal amountUtilizedFromPayee = (ci.Amount_Utilized_from_Payee__c != null) ? ci.Amount_Utilized_from_Payee__c : 0;
-                        
-                        Decimal calculateAmountUtilized = 0;
-                        
-                        
-                        if (importType == 'Form_40') {
-                            calculateAmountUtilized = wageBalanceDue;
-                        }
-                        else if (importType == 'Form_40_Partial') {
-                            calculateAmountUtilized = amountReserved + amountUtilizedFromPayee;
-                        }
-                        else if (importType == 'Corrective_Form_40') {
-                            calculateAmountUtilized = amountUtilizedFromPayee;
-                        } 
-                        
-                        caseIssueAmountUtilizedFromPayee.put(associationData.caseIssueId, calculateAmountUtilized);
-                        /*
-Decimal percentageshare = String.isEmpty(accP.factor) ? 0 : toDecimal(accP.factor)/100;
-Decimal pcinterestShare = (ci.Post_Citation_Interest_for_Wages__c != null ? ci.Post_Citation_Interest_for_Wages__c : 0) * percentageshare;
-Decimal pjinterestShare = (ci.Post_Judgment_Interest_for_Wages__c != null ? ci.Post_Judgment_Interest_for_Wages__c : 0) * percentageshare;
-
-System.Debug('Interest Calculated pc '+pcinterestShare);
-System.Debug('Interest Calculated pj '+pjinterestShare);
-
-totalCitation += pcinterestShare;
-totalJudgment += pjinterestShare;
-*/
                         caseIssueJsonList.add(associationData);
                     }
                     
                     payee.Payee_Association_JSON__c = JSON.serialize(caseIssueJsonList);
-                    /*
-if(!isLinkedToAllCaseIssue){
-payee.Post_Citation_Interest_for_Wages__c = totalCitation.setScale(2, RoundingMode.HALF_UP);
-payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMode.HALF_UP);
-}
-*/
                     createPayeeList.add(payee);
                     
                 } else {
@@ -463,10 +412,10 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             Database.rollback(sp);
         }
         else{
-            	insertedAccounts +=insertedAccount;
-                insertedCaseRoles += insertedCaseRole;
-                insertedPayees += insertedPayee;
-                successCountPayee += successPayee;
+            insertedAccounts +=insertedAccount;
+            insertedCaseRoles += insertedCaseRole;
+            insertedPayees += insertedPayee;
+            successCountPayee += successPayee;
         }
     }
     
@@ -528,56 +477,36 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
         }
         
         // --- Prepare Case Issue Updates ---
-
+        
         
         List<DIR_Violation__c> caseIssueUpdate = new List<DIR_Violation__c>();
         
-        /*
-        for (Id caseIssue : caseIssueAmountUtilizedFromPayee.keySet()) {
-            DIR_Violation__c caseIssueSingle = new DIR_Violation__c();
-            caseIssueSingle.Id = caseIssue;
-            Decimal amountUtilized = caseIssueAmountUtilizedFromPayee.get(caseIssue);
-            if (amountUtilized != null) {
-                caseIssueSingle.Amount_Utilized_from_Payee__c = amountUtilized.setScale(2, RoundingMode.HALF_UP);
-            }
+        for (DIR_Violation__c ci : caseIssueList) {
+            DIR_Violation__c caseIssue = new DIR_Violation__c();
             
-            caseIssueUpdate.add(caseIssueSingle);
-        }
-        */
-        
-         List<DIR_Violation__c> caseIssueList = [
-            SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, Amount_Utilized_from_Payee__c,
-            Violation_Type__r.Violation_Type_Name__c, Violation_Type__r.Violation_Type__c, Post_Judgment_Interest_for_Wages__c, Post_Citation_Interest_for_Wages__c
-            FROM DIR_Violation__c
-            WHERE Id IN :caseIssueIds
-        ];
-        
-         for (DIR_Violation__c ci : caseIssueList) {
-            DIR_Violation__c caseIssueSingle = new DIR_Violation__c();
-             
-             Decimal wageBalanceDue = (ci.Wage_Balance_Due__c != null) ? ci.Wage_Balance_Due__c : 0;
-             Decimal amountReserved = (ci.Amount_Reserved__c != null) ? ci.Amount_Reserved__c : 0;
-             Decimal amountUtilizedFromPayee = (ci.Amount_Utilized_from_Payee__c != null) ? ci.Amount_Utilized_from_Payee__c : 0;
-             
-             Decimal calculateAmountUtilized = 0;
-             
-             
-             if (importType == 'Form_40') {
-                 calculateAmountUtilized = wageBalanceDue;
-             }
-             else if (importType == 'Form_40_Partial') {
-                 calculateAmountUtilized = amountReserved + amountUtilizedFromPayee;
-             }
-             else if (importType == 'Corrective_Form_40') {
-                 calculateAmountUtilized = amountUtilizedFromPayee;
-             } 
-             
-            caseIssueSingle.Id = ci.Id;
+            Decimal wageBalanceDue = (ci.Wage_Balance_Due__c != null) ? ci.Wage_Balance_Due__c : 0;
+            Decimal amountReserved = (ci.Amount_Reserved__c != null) ? ci.Amount_Reserved__c : 0;
+            Decimal amountUtilizedFromPayee = (ci.Amount_Utilized_from_Payee__c != null) ? ci.Amount_Utilized_from_Payee__c : 0;
+            
+            Decimal calculateAmountUtilized = 0;
+            
+            
+            if (importType == 'Form_40') {
+                calculateAmountUtilized = wageBalanceDue;
+            }
+            else if (importType == 'Form_40_Partial') {
+                calculateAmountUtilized = amountReserved + amountUtilizedFromPayee;
+            }
+            else if (importType == 'Corrective_Form_40') {
+                calculateAmountUtilized = amountUtilizedFromPayee;
+            } 
+            
+            caseIssue.Id = ci.Id;
             if (calculateAmountUtilized != null) {
-                caseIssueSingle.Amount_Utilized_from_Payee__c = calculateAmountUtilized.setScale(2, RoundingMode.HALF_UP);
+                caseIssue.Amount_Utilized_from_Payee__c = calculateAmountUtilized.setScale(2, RoundingMode.HALF_UP);
             }
             
-            caseIssueUpdate.add(caseIssueSingle);
+            caseIssueUpdate.add(caseIssue);
         }
         
         // --- Update Case Issues ---
@@ -608,8 +537,6 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             Id = caseId,
             Import_Form_40_Details__c = JSON.serialize(cj)
         );
-        
-        caseManagement.Need_Payee_Batch_Run__c = isLinkedToAllCaseIssue ? false : true;
         
         List<Database.SaveResult> updateCaseResults = Database.update(
             new List<DIR_Case__c>{ CaseManagement },
@@ -702,7 +629,6 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
             System.debug('nonDMLErrorMessages : String.isNotBlank(nonDMLErrorMessages) : ' + allErrorMessages);
         }
         
-        boolean apexBatchCall = false;
         List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
         Map<String, Integer> processSummary = new Map<String, Integer>();
         if(batchRunCount == 1 || batchError == false){
@@ -727,7 +653,6 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
                 failedRecords,
                 failedRecords
             );
-            apexBatchCall = true;
         }
         
         
@@ -757,7 +682,6 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
                 ),
                 200
             );
-            apexBatchCall = true;
         }
         
         if(duplicatePayees && batchRunCount > 1 && batchError == true){
@@ -783,37 +707,15 @@ payee.Post_Judgment_Interest_for_Wages__c = totalJudgment.setScale(2, RoundingMo
                 ),
                 1
             );  
-            apexBatchCall = true;
         }
         
+        try {
             Set<Id> caseIds = new Set<Id>();
-            caseIds.add(Id.valueof(caseId));
+            caseIds.add(Id.valueOf(caseId));
+            
             Database.executeBatch(new IC_RollUpPayeeBatch(caseIds));
-        
-        
-        
-        if(!apexBatchCall){
-            Boolean reverted = false;
-            BatchEmailService.sendBatchSummaryEmail(
-                caseId,
-                importType,
-                insertedAccounts,
-                insertedCaseRoles,
-                insertedPayees,
-                successCountPayee,
-                failureCountPayee,
-                batchError,
-                batchRunCount,
-                NumberofImportRecordsInserted,
-                allErrorMessages,
-                creationErrorTable,
-                updateerrorTable,
-                processSummary,
-                'ProcessImportRecordsRedesigned',
-                reverted,
-                failedRecords,
-                failedRecords
-            );
+        } catch (Exception ex) {
+            System.debug('Error while executing ProcessImportRecordsRedesigned: ' + ex.getMessage());
         }
         
     }
