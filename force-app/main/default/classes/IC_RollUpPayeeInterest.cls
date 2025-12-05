@@ -20,6 +20,8 @@ public without sharing class IC_RollUpPayeeInterest {
                    Payee_Association_JSON__c
             FROM Payee__c
             WHERE Case_Management__c = :caseId
+            AND NetWages__c != NULL
+            AND (Payee_Type__c ='Employee' OR Payee_Type__c = 'Employee - Net Wages')
             ORDER BY NetWages__c DESC NULLS LAST
         ];
 
@@ -122,6 +124,20 @@ public without sharing class IC_RollUpPayeeInterest {
 
         // STEP 7: Update
         Database.update(payees, false);
+
+        List<AggregateResult> agrResult = [Select Sum(Post_Citation_Interest_for_Wages__c) pcWages from DIR_Violation__c where Case__c = :caseId];
+        Decimal totalPostCitation = (Decimal) agrResult[0].get('pcWages');
+         
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            mail.setToAddresses(new List<string>{'bharath.m@touchpointsinc.com'}); 
+        mail.setSubject('IC Roll Up Payee Interest Summary');
+        String emailBody = 'IC Roll Up Payee Interest Summary.\n\n'
+            + 'Post CittaionInteerst TOtal after in Payee Interest Calculationis  is   ' + totalPostCitation + '\n';
+            
+        
+
+        mail.setPlainTextBody(emailBody);
+        Messaging.sendEmail(new Messaging.SingleEmailMessage[]{mail});
     }
 /*
     private static void balanceGlobally(List<Payee__c> payees, String field, Decimal target) {

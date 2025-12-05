@@ -20,7 +20,7 @@ export default class JsonToTable extends LightningElement {
        // { jsonKey: 'netWagesBreakdown', label: 'Net Wages Breakdown', type: 'currency' },
         { jsonKey: 'factor', label: 'Factor', type: 'number', typeAttributes: { minimumIntegerDigits: 1, maximumFractionDigits: 5 } },
         //{ jsonKey: 'totalWageAssessmentBreakdown', label: 'Total Wage Assessment Breakdown', type: 'currency' },
-        //{ jsonKey: 'caseIssueBreakdown', label: 'Case Issue Breakdown', type: 'currency' },
+        { jsonKey: 'caseIssueBreakdown', label: 'Case Issue Breakdown', type: 'currency' },
        // { jsonKey: 'deductionsTotalBreakdown', label: 'Deductions Total Breakdown', type: 'currency' },
         { jsonKey: 'caseIssueId', label: 'Case Issue Id', type: 'hidden' }
     ];

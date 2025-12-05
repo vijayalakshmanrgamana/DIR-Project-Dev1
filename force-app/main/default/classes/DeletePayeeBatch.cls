@@ -1,112 +1,55 @@
 public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.Stateful, Database.AllowsCallouts {
     
-    private Set<Id> accountIds;
-    private Set<Id> caseRoleIds;
     private Set<Id> payeeIds;
     private Id caseId;
-    private String importType;
-    private Integer insertedAccounts;
-    private Integer insertedCaseRoles;
-    private Integer insertedPayees;
-    private Integer successCountPayee;
-    private Integer failureCountPayee;
-    private Boolean batchError;
-    private Integer batchRunCount;
-    private Integer numberOfImportRecordsInserted;
-    private String allErrorMessages;
-    private String creationErrorTable;
-    private String updateerrorTable;
-    public Boolean reverted;
-    public String batchName;
+    private boolean reverted;
+    private String allErrorMessages = ' ';
     public List<BatchEmailService.WrapperError> failedRecordsRevert;
     public Boolean clean = false;
     public List<DIR_Violation__c> caseIssueList;
+    BatchEmailService.BatchSummaryWrapper wrap = new BatchEmailService.BatchSummaryWrapper();
     
-    // Summary Map
     Map<String, Integer> processSummary = new Map<String, Integer>{
         'Account_Deleted' => 0,
-            'CaseRole_Deleted' => 0,
-            'Payee_Deleted' => 0,
-            'Account_Failed' => 0,
-            'CaseRole_Failed' => 0,
-            'Payee_Failed' => 0
-            };
-                
-                // Use WrapperError from BatchEmailService (not local)
-                List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
+        'CaseRole_Deleted' => 0,
+        'Payee_Deleted' => 0,
+        'Account_Failed' => 0,
+        'CaseRole_Failed' => 0,
+        'Payee_Failed' => 0
+    };
     
-    // Constructor
+    // List to store records that failed deletion, using the external wrapper
+    List<BatchEmailService.WrapperError> failedRecordsDelete = new List<BatchEmailService.WrapperError>();
+    
+    // Constructor for the revert/cleanup process (chained from a previous batch/step)
     public DeletePayeeBatch(
-        Set<Id> accountIds,
-        Set<Id> caseRoleIds,
         Set<Id> payeeIds,
-        Id caseId,
-        String importType,
-        Integer insertedAccounts,
-        Integer insertedCaseRoles,
-        Integer insertedPayees,
-        Integer successCountPayee,
-        Integer failureCountPayee,
-        Boolean batchError,
-        Integer batchRunCount,
-        Integer numberOfImportRecordsInserted,
-        String allErrorMessages,
-        String creationErrorTable,
-        String updateerrorTable,
         boolean reverted,
-        String batchName,
         List<BatchEmailService.WrapperError> failedRecordsRevert,
-        Map<String, Integer> processSummaryRevert
+        Map<String, Integer> processSummaryRevert,
+        BatchEmailService.BatchSummaryWrapper wrap
     ) {
-        this.accountIds = accountIds;
-        this.caseRoleIds = caseRoleIds;
-        this.payeeIds = payeeIds;
-        this.caseId = caseId;
-        this.importType = importType;
-        this.insertedAccounts = insertedAccounts;
-        this.insertedCaseRoles = insertedCaseRoles;
-        this.insertedPayees = insertedPayees;
-        this.successCountPayee = successCountPayee;
-        this.failureCountPayee = failureCountPayee;
-        this.batchError = batchError;
-        this.batchRunCount = batchRunCount;
-        this.numberOfImportRecordsInserted = numberOfImportRecordsInserted;
-        this.allErrorMessages = allErrorMessages;
-        this.creationErrorTable = creationErrorTable;
-        this.updateerrorTable = updateerrorTable;
-        this.reverted = reverted;
-        this.batchName = batchName;
-        this.failedRecordsRevert = failedRecordsRevert;
         
+        this.payeeIds = payeeIds;
+        this.reverted = reverted;
+        this.failedRecordsRevert = failedRecordsRevert;
+        // Merge process summary from the previous step
         for(String revertMap : processSummaryRevert.keySet()){
             processSummary.put(revertMap, processSummaryRevert.get(revertMap));
         }
+        this.wrap = wrap;
         
     }
     
+    // Constructor for the initial "clean up" process
     public DeletePayeeBatch(Id caseId, boolean clean){
         this.caseId = caseId;
         this.clean = clean;
         
         this.payeeIds = new Set<Id>();
-        this.accountIds = new Set<Id>();
-        this.caseRoleIds = new Set<Id>();
         this.failedRecordsRevert = new List<BatchEmailService.WrapperError>();
-        
-        this.insertedAccounts = 0;
-        this.insertedCaseRoles = 0;
-        this.insertedPayees = 0;
-        this.successCountPayee = 0;
-        this.failureCountPayee = 0;
-        this.batchError = false;
-        this.batchRunCount = 0;
-        this.numberOfImportRecordsInserted = 0;
-        this.allErrorMessages = '';
-        this.creationErrorTable ='';
-        this.updateerrorTable ='';
-        this.reverted = false;
-        this.batchName = '';
 
+        // Query all related DIR_Violation__c records for later use in the finish method (for clean-up only)
         caseIssueList = [
             SELECT Id, Name, Wage_Balance_Due__c, Amount_Reserved__c, 
             Amount_Utilized_from_Payee__c,
@@ -120,9 +63,9 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
     }
 
     
-    // Batch Start
+    // Batch Start method: Defines the records to be processed
     public Database.QueryLocator start(Database.BatchableContext bc) {
-        // Query Accounts for deletion
+        // Query Payee__c records either by a specific set of IDs (revert) or by Case ID (clean)
         if(!clean){
             return Database.getQueryLocator([
                 SELECT Id, Name FROM Payee__c WHERE Id IN :payeeIds
@@ -135,38 +78,42 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
         }
     }
     
-    // Batch Execute
+    // Batch Execute method: Executes the deletion logic for a batch of records
     public void execute(Database.BatchableContext bc, List<Payee__c> scope) {
         try {
             
-            // Get Payee Ids
+            // Collect the Ids of Payee records in the current scope
             Set<Id> scopeIds = new Set<Id>();
             for (Payee__c p : scope) {
                 scopeIds.add(p.Id);
             }
             
-            // Get Account record IDs that are linked to Payee records
-            
+            // Set to hold Account IDs linked to the Payees for cascading deletion
             Set<Id> accIds = new Set<Id>();
             
             // --- Delete Payees ---
             if (!scopeIds.isEmpty()) {
+                // Query Payee records again to get the parent Case_Role__r.Entity__c (Account ID)
                 List<Payee__c> payeeList = [
                     SELECT Id, Name, Case_Role__r.Entity__c FROM Payee__c WHERE Id IN :scopeIds
                 ];
                 
+                // Collect the associated Account IDs
                 for(Payee__c payee : payeeList){
                     accIds.add(payee.Case_Role__r.Entity__c);
                 }
                 
+                // Perform the delete operation on Payee records (allOrNone=false)
                 List<Database.DeleteResult> payeeResults = Database.delete(payeeList, false);
                 
+                // Process the deletion results for Payees
                 for (Integer i = 0; i < payeeResults.size(); i++) {
                     if (payeeResults[i].isSuccess()) {
                         processSummary.put('Payee_Deleted', processSummary.get('Payee_Deleted') + 1);
                     } else {
                         processSummary.put('Payee_Failed', processSummary.get('Payee_Failed') + 1);
                         Database.Error err = payeeResults[i].getErrors()[0];
+                        // Log failed Payee record
                         failedRecordsDelete.add(new BatchEmailService.WrapperError(
                             payeeList[i].Id,
                             payeeList[i].Name,
@@ -179,17 +126,21 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
             
             // --- Delete Accounts ---
             if (!accIds.isEmpty()) {
+                // Query Account records for deletion
                 List<Account> accList = [
                     SELECT Id, Name FROM Account WHERE Id IN :accIds
                 ];
+                // Perform the delete operation on Account records (allOrNone=false)
                 List<Database.DeleteResult> accDeleteResults = Database.delete(accList, false);
                 
+                // Process the deletion results for Accounts
                 for (Integer i = 0; i < accDeleteResults.size(); i++) {
                     if (accDeleteResults[i].isSuccess()) {
                         processSummary.put('Account_Deleted', processSummary.get('Account_Deleted') + 1);
                     } else {
                         processSummary.put('Account_Failed', processSummary.get('Account_Failed') + 1);
                         Database.Error err = accDeleteResults[i].getErrors()[0];
+                        // Log failed Account record
                         failedRecordsDelete.add(new BatchEmailService.WrapperError(
                             accList[i].Id,
                             accList[i].Name,
@@ -200,72 +151,104 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                 }
             }
             
-        } 
-        catch (Exception ex) {
+        } catch (Exception ex) {
+            // General error handling for deleting Account and Payee records
             String trace = ex.getStackTraceString();
             String firstLine = trace.split('\n')[0];
             
-            this.allErrorMessages += 
-                'General Error : ' + ex.getMessage() +
-                ' | Location: ' + firstLine + '\n';
+            String errorMsg = 'Error while deleting Account and Payee records: ' +
+                ex.getMessage() +
+                ' | Location: ' + firstLine +
+                ' | Stack Trace: ' + trace + '\n';
             
-            this.batchError = true;
+            this.allErrorMessages += errorMsg;
             reverted = false;
+            
+            System.debug('### [ERROR] Delete Account & Payee: ' + ex.getMessage());
+            System.debug('### [TRACE] ' + trace);
+            
+            // Log the error using the BatchEmailService
+            BatchEmailService.logError(ex);
         }
+
     }
     
-    // Batch Finish
+    // Batch Finish method: Sends summary email and handles post-processing logic
     public void finish(Database.BatchableContext bc) {
+        System.debug('Total Failed Deletions in this batch: ' + failedRecordsDelete.size());
         
+        // Determine the overall status of the delete operation
         if (failedRecordsDelete.isEmpty()) {
             reverted = true;
         }
-        
-        if(!failedRecordsRevert.isEmpty()){
+        // If there were any failures in the previous (revert) step or this (delete) step
+        if(!failedRecordsRevert.isEmpty() || !failedRecordsDelete.isEmpty()){
             reverted = false;
         }
         
         Id jobId = BC.getJobId();
         
-        // 2. Query the AsyncApexJob record to check ExtendedStatus
+        // Query the AsyncApexJob record to check for general batch errors (ExtendedStatus)
         AsyncApexJob job = [
             SELECT Id, ExtendedStatus, NumberOfErrors
             FROM AsyncApexJob
             WHERE Id = :jobId
             LIMIT 1
         ];
+        
+        // Check for batch-level errors
         if (job.ExtendedStatus != null) {
             reverted = false;
             this.allErrorMessages += 'Apex Job : ' + job.ExtendedStatus;
-            this.batchError = true;
         }
         
         
         if(!clean){
-            // Send summary email using BatchEmailService
-            BatchEmailService.sendBatchSummaryEmail(
-                caseId,
-                importType,
-                insertedAccounts,
-                insertedCaseRoles,
-                insertedPayees,
-                successCountPayee,
-                failureCountPayee,
-                batchError,
-                batchRunCount,
-                numberOfImportRecordsInserted,
-                allErrorMessages,
-                creationErrorTable,
-                updateerrorTable,
-                processSummary,
-                'DeletePayeeBatch',
-                reverted,
-                failedRecordsDelete,
-                failedRecordsRevert
-            );
+            // Logic for "Revert" or standard delete flow (non-clean)
+            BatchEmailService.BatchSummaryWrapper wrapDelete = new BatchEmailService.BatchSummaryWrapper();
+            // Copy properties from the original wrapper object
+            wrapDelete.caseId                      = wrap.caseId;
+            wrapDelete.importType                  = wrap.importType;
+            wrapDelete.insertedAccounts            = wrap.insertedAccounts;
+            wrapDelete.insertedCaseRoles           = wrap.insertedCaseRoles;
+            wrapDelete.insertedPayees              = wrap.insertedPayees;
+            wrapDelete.successCountPayee           = wrap.successCountPayee;
+            wrapDelete.failureCountPayee           = wrap.failureCountPayee;
+            wrapDelete.batchError                  = wrap.batchError;
+            wrapDelete.batchRunCount               = wrap.batchRunCount;
+            wrapDelete.numberOfImportRecordsInserted = wrap.NumberofImportRecordsInserted;
+            wrapDelete.creationErrorTable          = wrap.creationErrorTable;
+            wrapDelete.updateErrorTable            = wrap.updateerrorTable;
+            wrapDelete.correctiveForm40DeleteSuccess = wrap.correctiveForm40DeleteSuccess;
+            wrapDelete.correctiveForm40DeleteError   = wrap.correctiveForm40DeleteError;
+            
+            // Combine error messages and summaries
+            wrapDelete.allErrorMessages            = allErrorMessages + wrap.allErrorMessages;
+            wrapDelete.processSummary              = processSummary;
+            wrapDelete.reverted                    = reverted;
+            wrapDelete.failedRecordsDelete         = failedRecordsDelete;
+            wrapDelete.failedRecordsRevert         = failedRecordsRevert;
+            wrapDelete.processName                 = 'DeletePayeeBatch';
+            
+            System.debug('Final wrapDelete object: ' + wrapDelete);
+            
+            BatchEmailService.sendBatchSummaryEmail(wrapDelete);
         }
         else{
+            
+            // Delete CSV import rows
+            List<Import__c> Imports = [
+                SELECT Id FROM Import__c
+                WHERE Case_Management__c = :caseId
+            ];
+            if(!Imports.isEmpty()){
+            delete Imports;
+            }
+            
+            // Logic for the "Clean Up" flow: Update Case Issues after Payee deletion
             List<BatchEmailService.WrapperError> failedCaseIssueRecordsUpdate = new List<BatchEmailService.WrapperError>();
+            
+            // Initialize process summary counts if not present
             if (!processSummary.containsKey('CaseIssue_Updated')) {
                 processSummary.put('CaseIssue_Updated', 0);
             }
@@ -275,15 +258,18 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
             
             List<DIR_Violation__c> caseIssueUpdate = new List<DIR_Violation__c>();
             
+            // Prepare DIR_Violation__c records for update (resetting Amount_Utilized_from_Payee__c to 0)
             for (DIR_Violation__c ci : caseIssueList) {
                 DIR_Violation__c caseIssue = new DIR_Violation__c();
                 caseIssue.Id = ci.Id;
                 caseIssue.Amount_Utilized_from_Payee__c = 0;
                 caseIssueUpdate.add(caseIssue);
             }
+            
             // --- Update Case Issues ---
             List<Database.SaveResult> updateCaseIssueResults = Database.update(caseIssueUpdate, false);
             
+            // Process the update results for DIR_Violation__c
             for (Integer i = 0; i < updateCaseIssueResults.size(); i++) {
                 Database.SaveResult sr = updateCaseIssueResults[i];
                 if (sr.isSuccess()) {
@@ -300,22 +286,42 @@ public class DeletePayeeBatch implements Database.Batchable<SObject>, Database.S
                     
                     // Store the failed record details
                     failedCaseIssueRecordsUpdate.add(new BatchEmailService.WrapperError(
-                        originalRecord.Id, // Record Id
-                        originalRecord.Name, // Record Name/Key Field
-                        err.getMessage(), // Error Message
-                        'DIR_Violation' // Object Type
+                        originalRecord.Id, 
+                        originalRecord.Name, 
+                        err.getMessage(), 
+                        'DIR_Violation' 
                     ));
                 }
             }
             
-            System.debug(processSummary.get('CaseIssue_Updated') + ' Case Issue records updated from Delete PayeeBatch');
-            System.debug(processSummary.get('CaseIssue_Failed') + ' Case Issue records failed to update from Delete PayeeBatch');
-            System.debug('Failed updates: ' + failedCaseIssueRecordsUpdate);
+                        // Update DIR_Case__c with import info
+            DIR_Case__c caseManagement = [
+                SELECT Id, Name, Import_Form_40_Details__c
+                FROM DIR_Case__c
+                WHERE Id = :caseId
+                LIMIT 1
+            ];
             
+            BatchEmailService.importInfo impInfo = new BatchEmailService.importInfo();
+            impInfo.Last_Modified_By = UserInfo.getName();
+            impInfo.UserId = UserInfo.getUserId();
+            impInfo.Last_Modified_Date = System.now().format('MM/dd/yyyy h:mm a', UserInfo.getTimeZone().getId());
             
+            caseManagement.Import_Form_40_Details__c = JSON.serialize(impInfo);
+            
+            List<Database.SaveResult> updateCaseResults = Database.update(
+                new List<DIR_Case__c>{ caseManagement }, 
+                false
+            );
+            
+            System.debug('Case Issue Records Updated: ' + processSummary.get('CaseIssue_Updated'));
+            System.debug('Case Issue Records Failed to Update: ' + processSummary.get('CaseIssue_Failed'));
+            System.debug('Details of Failed Updates: ' + failedCaseIssueRecordsUpdate);
+            
+            // Send a specific summary email for the cleanup process
             BatchEmailService.sendDeletionSummaryEmail(
                 caseId,
-                'Cleanup',
+                'Clean Up',
                 processSummary,
                 'DeletePayeeBatch',
                 failedRecordsDelete,

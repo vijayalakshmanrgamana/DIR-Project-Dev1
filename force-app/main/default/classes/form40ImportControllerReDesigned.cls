@@ -272,7 +272,7 @@ public without sharing class form40ImportControllerReDesigned {
           Payee__c duplicatePayee = matchingPayees.get(uniqueKey);
           if (duplicatePayee != null) {
             row.isDuplicate = true;
-
+            /*
             if (importType == 'Corrective_Form_40') {
               Set<Id> existingCaseIssueIds = new Set<Id>();
               if (String.isNotBlank(duplicatePayee.Payee_Association_JSON__c)) {
@@ -301,6 +301,7 @@ public without sharing class form40ImportControllerReDesigned {
                 }
               }
             }
+              */
           }
           // Other validations
           validateRow(row);
@@ -1123,7 +1124,16 @@ public static List<ImportWrapper> revalidateEditedRows(
     public String citationNumber { get; set; }
 
     @AuraEnabled
+    public Decimal wagesDue { get; set; }
+
+     @AuraEnabled
+    public Decimal amountReserved { get; set; }
+
+    @AuraEnabled
     public Decimal amountutilizedbyPayee { get; set; }
+
+    @AuraEnabled
+    public Decimal remainingAmountoUpload { get; set; }
 
     @AuraEnabled
     public Decimal balanceDue { get; set; }
@@ -1134,7 +1144,7 @@ public static List<ImportWrapper> revalidateEditedRows(
     @AuraEnabled
     public boolean disableCheckBox {
       get {
-        return this.balanceDue == 0 ? true : false;
+        return this.remainingAmountoUpload == 0 ? true : false;
       }
       set;
     }
@@ -1145,15 +1155,20 @@ public static List<ImportWrapper> revalidateEditedRows(
       this.citationNumber = ci.Citation_Number__c;
       this.caseIssueName = ci.Name;
       this.violationType = ci.Violation_Type__r.Wizard_Search_Text__c;
+      this.amountReserved = ci.Amount_Reserved__c != null ? ci.Amount_Reserved__c : 0;
       this.amountutilizedbyPayee = ci.Amount_Utilized_from_Payee__c != null
         ? ci.Amount_Utilized_from_Payee__c
         : 0;
       this.balanceDue = 0;
+      
+     
       //this.citationform = ci.Citation_Form__c;
       //this.balanceDue = importType == 'Corrective_Form_40' ? ci.Wage_Balance_Due__c : ci.Remaining_Amount_to_Upload__c;
       //this.disableCheckBox = importType != 'Corrective_Form_40' && ci.Remaining_Amount_to_Upload__c ==0 ? true : false;
+	 this.remainingAmountoUpload = ci.Wage_Balance_Due__c == null ? 0 : ci.Wage_Balance_Due__c;
 
       if (ci.Wage_Balance_Due__c != 0) {
+          
         Decimal reservedAmount = (ci.Amount_Reserved__c == null)
           ? 0
           : ci.Amount_Reserved__c;
@@ -1168,26 +1183,27 @@ public static List<ImportWrapper> revalidateEditedRows(
 
         Decimal wagesDue = ci.Wages_Due__c != 0 ? ci.Wages_Due__c : 0;
         Decimal totalWagesDue = wageInterestatCitation + wagesDue;
-        this.balanceDueEEs = totalWagesDue - utilizedAmount; // shown at Form 40 Partial
+        this.wagesDue = totalWagesDue;
+       
         if (importType == 'Form_40')
-          this.balanceDue = totalWagesDue - utilizedAmount;
+          this.remainingAmountoUpload = totalWagesDue - utilizedAmount;
         if (importType == 'Form_40' && totalWagesDue - utilizedAmount == 0)
           this.disableCheckBox = true;
 
         if (importType == 'Corrective_Form_40')
-          this.balanceDue = utilizedAmount;
-        if (importType == 'Corrective_Form_40' && utilizedAmount == 0)
+          this.remainingAmountoUpload = reservedAmount != 0 ? ci.Amount_Utilized_from_Payee__c : totalWagesDue;
+        if (importType == 'Corrective_Form_40' && totalWagesDue == 0)
           this.disableCheckBox = true;
 
         if (importType == 'Form_40_Partial' && utilizedAmount != totalWagesDue)
-          this.balanceDue = reservedAmount;
+          this.remainingAmountoUpload = reservedAmount;
         if (
           importType == 'Form_40_Partial' &&
           (utilizedAmount == totalWagesDue ||
           reservedAmount + utilizedAmount > totalWagesDue)
         )
-          this.balanceDue = 0;
-        if (importType == 'Form_40_Partial' && this.balanceDue == 0)
+          this.remainingAmountoUpload = totalWagesDue - utilizedAmount;
+        if (importType == 'Form_40_Partial' && this.remainingAmountoUpload == 0)
           this.disableCheckBox = true;
       }
 

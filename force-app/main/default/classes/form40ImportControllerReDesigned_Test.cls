@@ -1,6 +1,6 @@
 @isTest
 public class form40ImportControllerReDesigned_Test {
-    
+     
     // --- Wrapper Class Definitions ---
     public class ImportWrapper {
         public Integer rowNumber                { get; set; }
@@ -85,7 +85,7 @@ public class form40ImportControllerReDesigned_Test {
         Integer updatedCases       = 0;
         boolean shouldRunSecondBatch = false;
         Integer NumberofImportRecordsInserted = 0;
-        
+         
         
         // 1. Setup Trigger Settings
         List<Trigger_Settings__c> triggerSettings = new List<Trigger_Settings__c>();
@@ -1144,7 +1144,6 @@ public class form40ImportControllerReDesigned_Test {
         cvinsert.PathOnClient = 'PayeeRevertData' + uniqueKey + 'BatchCount' + '.json';
         insert cvinsert;
         
-        
         ProcessImportRecordsRedesigned batch01 = new ProcessImportRecordsRedesigned();
         batch01.caseId = getCase[0].Id;
         batch01.importType = importType;
@@ -1155,6 +1154,8 @@ public class form40ImportControllerReDesigned_Test {
         Database.executeBatch(batch01, 200);
         Test.StopTest();
         
+         importType = 'Form_40_Partial';
+
         ProcessImportRecordsRedesigned batch02 = new ProcessImportRecordsRedesigned();
         batch02.caseId = getCase[0].Id;
         batch02.importType = importType;
@@ -1179,13 +1180,23 @@ public class form40ImportControllerReDesigned_Test {
             System.debug('ERROR in ProcessImportRecordsRedesigned: ' + ex.getMessage());
         }
         
+        importType = 'Corrective_Form_40';
+
+        ProcessImportRecordsRedesigned batch04 = new ProcessImportRecordsRedesigned();
+        batch04.caseId = getCase[0].Id;
+        batch04.importType = importType;
+        batch04.caseIssueIds = setOfCaseIssueIds;
+        batch04.uniqueKey = uniqueKey;
+        
+        Database.executeBatch(batch04, 200);
+        
     }
     
     @isTest
     public static void processIRRDSecond(){
         
         
-        String importType = 'Form_40';
+        String importType = 'Corrective_Form_40';
         Integer insertedAccounts   = 0;
         Integer insertedCaseRoles  = 0;
         Integer insertedPayees     = 0;
@@ -1202,17 +1213,18 @@ public class form40ImportControllerReDesigned_Test {
                                                     Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
                                                     Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
         
+        
+                Set<Id> setOfCaseIssueIds = new Set<Id>();
+        for(DIR_Violation__c caseIssueId : queriedCaseIssues){
+            setOfCaseIssueIds.add(caseIssueId.Id);
+        }
+        
         List<Import__c> impList = [
             SELECT Id
             FROM Import__c
             WHERE Case_Management__c = :getCase[0].Id AND (Employee_First_Name__c = null OR Employee_Last_Name__c = null OR Direct_Pay__c = 'Yes')
         ];
         delete impList;
-        
-        Set<Id> setOfCaseIssueIds = new Set<Id>();
-        for(DIR_Violation__c caseIssueId : queriedCaseIssues){
-            setOfCaseIssueIds.add(caseIssueId.Id);
-        }
         
         String contentTitlePattern = 'PayeeRevertData' + uniqueKey + '%';
         ContentVersion cvinsert = new ContentVersion();
@@ -1254,6 +1266,7 @@ public class form40ImportControllerReDesigned_Test {
         
         List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
         
+        
         List<Account> getAccountRecords = [SELECT Id FROM Account];
         List<Case_Role__c> getCaseRoleRecords = [SELECT Id FROM Case_Role__c];
         List<Payee__c> getPayeeRecords = [SELECT Id FROM Payee__c];
@@ -1283,28 +1296,133 @@ public class form40ImportControllerReDesigned_Test {
         String updateerrorTable = 'Test Update Error Table';
         Map<String, Integer> processSummary = new Map<String, Integer>();
         
+        BatchEmailService.BatchSummaryWrapper wrap = new BatchEmailService.BatchSummaryWrapper();
+        
+        wrap.caseId                         =  getCase[0].Id;
+        wrap.importType                     = importType;
+        wrap.insertedAccounts               = insertedAccounts;
+        wrap.insertedCaseRoles              = insertedCaseRoles;
+        wrap.insertedPayees                 = insertedPayees;
+        wrap.successCountPayee              = successCountPayee;
+        wrap.failureCountPayee              = failureCountPayee;
+        wrap.batchError                     = batchError;
+        wrap.batchRunCount                  = batchRunCount;
+        wrap.numberOfImportRecordsInserted  = NumberofImportRecordsInserted;
+        wrap.allErrorMessages               = allErrorMessages;
+        wrap.creationErrorTable             = creationErrorTable;
+        wrap.updateErrorTable               = updateerrorTable;
+        wrap.processSummary                 = processSummary;
+        wrap.processName                    = 'form40ImportControllerReDesigned_Test';
+        wrap.reverted                       = false;
+        wrap.failedRecordsDelete                 = failedRecords;
+        wrap.failedRecordsRevert                 = failedRecords;
+        wrap.correctiveForm40DeleteSuccess      = failedRecords;
+        wrap.correctiveForm40DeleteError        = failedRecords;
+        
         Database.executeBatch(
             new DeletePayeeBatch(
-                accDeleteIds,
-                caseRoleDeleteIds,
                 payeeDeleteIds,
-                getCase[0].Id,
-                importType,
-                insertedAccounts,
-                insertedCaseRoles,
-                insertedPayees,
-                successCountPayee,
-                failureCountPayee,
-                batchError,
-                batchRunCount,
-                NumberofImportRecordsInserted,
-                allErrorMessages,
-                creationErrorTable,
-                updateerrorTable,
                 false,
-                'ProcessImportRecordsRedesigned',
                 failedRecords,
-                processSummary
+                processSummary,
+                wrap
+            ),
+            200
+        );
+        
+        Database.executeBatch(
+            new DeletePayeeBatch(
+                getCase[0].Id,
+                true
+            ),
+            200
+        );
+    }
+    
+    
+    @isTest
+    public static void deletePBError(){
+        
+        String importType = 'Form_40';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        boolean shouldRunSecondBatch = false;
+        Integer NumberofImportRecordsInserted = 0;
+        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+        List<DIR_Case__c> queryCase = [SELECT Id, Name, Import_Form_40_Details__c FROM DIR_Case__c];
+        List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Violation_Type__c, Case__c, Assessment__c, Citation_Amount__c,
+                                                    Wages_Due__c, Original_Penalty_Assessment_Amount__c,
+                                                    Total_Interest_Amount__c, Status__c,
+                                                    Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
+                                                    Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
+        
+        List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
+        
+        
+        List<Account> getAccountRecords = [SELECT Id FROM Account];
+        List<Case_Role__c> getCaseRoleRecords = [SELECT Id FROM Case_Role__c];
+        List<Payee__c> getPayeeRecords = [SELECT Id FROM Payee__c];
+        
+        Set<Id> accDeleteIds = new Set<Id>();
+        Set<Id> caseRoleDeleteIds = new Set<Id>();
+        Set<Id> payeeDeleteIds = new Set<Id>();
+        
+        for (Account acc : getAccountRecords) {
+            accDeleteIds.add(acc.Id);
+        }
+        
+        for (Case_Role__c cr : getCaseRoleRecords) {
+            caseRoleDeleteIds.add(cr.Id);
+        }
+        
+        for (Payee__c payee : getPayeeRecords) {
+            payeeDeleteIds.add(payee.Id);
+        }
+        
+        Integer successCountPayee = 0;
+        Integer failureCountPayee = 0;
+        Boolean batchError = true;
+        Integer batchRunCount = 2;
+        String allErrorMessages = 'Test Error';
+        String creationErrorTable = 'Test Creation Error Table';
+        String updateerrorTable = 'Test Update Error Table';
+        Map<String, Integer> processSummary = new Map<String, Integer>{'Test ' => 1};
+        
+        BatchEmailService.BatchSummaryWrapper wrap = new BatchEmailService.BatchSummaryWrapper();
+        
+        wrap.caseId                         =  getCase[0].Id;
+        wrap.importType                     = importType;
+        wrap.insertedAccounts               = insertedAccounts;
+        wrap.insertedCaseRoles              = insertedCaseRoles;
+        wrap.insertedPayees                 = insertedPayees;
+        wrap.successCountPayee              = successCountPayee;
+        wrap.failureCountPayee              = failureCountPayee;
+        wrap.batchError                     = batchError;
+        wrap.batchRunCount                  = batchRunCount;
+        wrap.numberOfImportRecordsInserted  = NumberofImportRecordsInserted;
+        wrap.allErrorMessages               = allErrorMessages;
+        wrap.creationErrorTable             = creationErrorTable;
+        wrap.updateErrorTable               = updateerrorTable;
+        wrap.processSummary                 = processSummary;
+        wrap.processName                    = 'form40ImportControllerReDesigned_Test';
+        wrap.reverted                       = false;
+        wrap.failedRecordsDelete                 = failedRecords;
+        wrap.failedRecordsRevert                 = failedRecords;
+        wrap.correctiveForm40DeleteSuccess      = failedRecords;
+        wrap.correctiveForm40DeleteError        = failedRecords;
+        List<Import__c> deleteImports = [Select Id From Import__c];
+        delete deleteImports;
+        Database.executeBatch(
+            new DeletePayeeBatch(
+                null,
+                false,
+                failedRecords,
+                processSummary,
+                wrap
             ),
             200
         );
@@ -1383,54 +1501,49 @@ public class form40ImportControllerReDesigned_Test {
         String updateerrorTable = 'Test Update Error Table';
         Map<String, Integer> processSummary = new Map<String, Integer>();
         
+        BatchEmailService.BatchSummaryWrapper wrap = new BatchEmailService.BatchSummaryWrapper();
+        
+        wrap.caseId                         =  getCase[0].Id;
+        wrap.importType                     = importType;
+        wrap.insertedAccounts               = insertedAccounts;
+        wrap.insertedCaseRoles              = insertedCaseRoles;
+        wrap.insertedPayees                 = insertedPayees;
+        wrap.successCountPayee              = successCountPayee;
+        wrap.failureCountPayee              = failureCountPayee;
+        wrap.batchError                     = batchError;
+        wrap.batchRunCount                  = batchRunCount;
+        wrap.numberOfImportRecordsInserted  = NumberofImportRecordsInserted;
+        wrap.allErrorMessages               = allErrorMessages;
+        wrap.creationErrorTable             = creationErrorTable;
+        wrap.updateErrorTable               = updateerrorTable;
+        wrap.processSummary                 = processSummary;
+        wrap.processName                    = 'form40ImportControllerReDesigned_Test';
+        wrap.reverted                       = false;
+        wrap.failedRecordsDelete                 = failedRecords;
+        wrap.failedRecordsRevert                 = failedRecords;
+        wrap.correctiveForm40DeleteSuccess      = failedRecords;
+        wrap.correctiveForm40DeleteError        = failedRecords;
+        
         Database.executeBatch(
             new RevertPayeeBatch(
-                accDeleteIds,
-                caseRoleDeleteIds,
                 payeeDeleteIds,                    
-                getCase[0].Id,
-                importType,
-                insertedAccounts,
-                insertedCaseRoles,
-                insertedPayees,
-                successCountPayee,
-                failureCountPayee,
-                batchError,
-                batchRunCount,
-                NumberofImportRecordsInserted,
-                allErrorMessages,
-                creationErrorTable,
-                updateerrorTable,
-                uniqueKey                
+                uniqueKey,
+                wrap            
             ),
             2
         );
         
         
-        accDeleteIds.clear();
+        payeeDeleteIds.clear();
         
         Database.executeBatch(
             new RevertPayeeBatch(
-                accDeleteIds,
-                caseRoleDeleteIds,
                 payeeDeleteIds,                    
-                getCase[0].Id,
-                importType,
-                insertedAccounts,
-                insertedCaseRoles,
-                insertedPayees,
-                successCountPayee,
-                failureCountPayee,
-                batchError,
-                batchRunCount,
-                NumberofImportRecordsInserted,
-                allErrorMessages,
-                creationErrorTable,
-                updateerrorTable,
-                uniqueKey                
+                uniqueKey,
+                wrap            
             ),
             2
-        );  
+        );
         
     }
     
@@ -1474,27 +1587,73 @@ public class form40ImportControllerReDesigned_Test {
             'ProcessImportRecordsRedesigned',
             reverted,
             failedRecords,
+            failedRecords,
+            failedRecords,
             failedRecords
         );
         
         BatchEmailService.sendDeletionSummaryEmail(
-                getCase[0].Id,
-                'Cleanup',
-                processSummary,
-                'DeletePayeeBatch',
-                failedRecords,
-                failedRecords
-            );
+            getCase[0].Id,
+            'Cleanup',
+            processSummary,
+            'DeletePayeeBatch',
+            failedRecords,
+            failedRecords
+        );
         
         reverted = true;
         
-        processSummary.put('Account_Deleted', 0);
-        processSummary.put('CaseRole_Deleted', 0);
-        processSummary.put('Payee_Deleted', 0);
-        processSummary.put('Account_Failed', 0);
-        processSummary.put('CaseRole_Failed', 0);
-        processSummary.put('Payee_Failed', 0);
-        processSummary.put('Payee_Updated', 0);
+        processSummary.put('Account_Deleted', 1);
+        processSummary.put('CaseRole_Deleted', 1);
+        processSummary.put('Payee_Deleted', 1);
+        processSummary.put('Account_Failed', 1);
+        processSummary.put('CaseRole_Failed', 1);
+        processSummary.put('Payee_Failed', 1);
+        processSummary.put('Payee_Updated', 1);
+        processSummary.put('Payee_Updated_Failed', 1);
+            
+        BatchEmailService.sendBatchSummaryEmail(
+            getCase[0].Id,
+            importType,
+            insertedAccounts,
+            insertedCaseRoles,
+            insertedPayees,
+            successCountPayee,
+            failureCountPayee,
+            batchError,
+            batchRunCount,
+            NumberofImportRecordsInserted,
+            allErrorMessages,
+            creationErrorTable,
+            updateerrorTable,
+            processSummary,
+            'ProcessImportRecordsRedesigned',
+            reverted,
+            failedRecords,
+            failedRecords,
+            failedRecords,
+            failedRecords
+        );
+        
+        BatchEmailService.sendDeletionSummaryEmail(
+            getCase[0].Id,
+            'Cleanup',
+            processSummary,
+            'DeletePayeeBatch',
+            failedRecords,
+            failedRecords
+        );
+        
+        failedRecords.add(new BatchEmailService.WrapperError(
+            getCase[0].Id,
+            'Test 001',
+            'Error Test 001',
+            'Payee'
+        ));
+        
+        batchRunCount = 1;
+        batchError = true;
+        reverted = true;
         
         BatchEmailService.sendBatchSummaryEmail(
             getCase[0].Id,
@@ -1514,58 +1673,19 @@ public class form40ImportControllerReDesigned_Test {
             'ProcessImportRecordsRedesigned',
             reverted,
             failedRecords,
-            failedRecords
-        );
-        
-                BatchEmailService.sendDeletionSummaryEmail(
-                getCase[0].Id,
-                'Cleanup',
-                processSummary,
-                'DeletePayeeBatch',
-                failedRecords,
-                failedRecords
-            );
-        
-        failedRecords.add(new BatchEmailService.WrapperError(
-                            getCase[0].Id,
-                            'Test 001',
-                            'Error Test 001',
-                            'Payee'
-                        ));
-        
-        batchRunCount = 1;
-        batchError = true;
-        reverted = true;
-        
-            BatchEmailService.sendBatchSummaryEmail(
-            getCase[0].Id,
-            importType,
-            insertedAccounts,
-            insertedCaseRoles,
-            insertedPayees,
-            successCountPayee,
-            failureCountPayee,
-            batchError,
-            batchRunCount,
-            NumberofImportRecordsInserted,
-            allErrorMessages,
-            creationErrorTable,
-            updateerrorTable,
-            processSummary,
-            'ProcessImportRecordsRedesigned',
-            reverted,
+            failedRecords,
             failedRecords,
             failedRecords
         );
         
-                BatchEmailService.sendDeletionSummaryEmail(
-                getCase[0].Id,
-                'Cleanup',
-                processSummary,
-                'DeletePayeeBatch',
-                failedRecords,
-                failedRecords
-            );
+        BatchEmailService.sendDeletionSummaryEmail(
+            getCase[0].Id,
+            'Cleanup',
+            processSummary,
+            'DeletePayeeBatch',
+            failedRecords,
+            failedRecords
+        );
         
         
         batchRunCount = 2;
@@ -1590,17 +1710,19 @@ public class form40ImportControllerReDesigned_Test {
             'ProcessImportRecordsRedesigned',
             reverted,
             failedRecords,
+            failedRecords,
+            failedRecords,
             failedRecords
         );
         
-                BatchEmailService.sendDeletionSummaryEmail(
-                getCase[0].Id,
-                'Cleanup',
-                processSummary,
-                'DeletePayeeBatch',
-                failedRecords,
-                failedRecords
-            );
+        BatchEmailService.sendDeletionSummaryEmail(
+            getCase[0].Id,
+            'Cleanup',
+            processSummary,
+            'DeletePayeeBatch',
+            failedRecords,
+            failedRecords
+        );
     }
     
     @isTest
@@ -1623,5 +1745,75 @@ public class form40ImportControllerReDesigned_Test {
         catch (Exception ex) {
             System.debug('ERROR in IC_RollUpPayeeBatch: ' + ex.getMessage());
         }
+    }
+    
+    @isTest
+    public static void CorrectiveForm40PayeeDeletion(){
+        
+        Integer successCountPayee = 0;
+        Integer failureCountPayee = 0;
+        Boolean batchError = true;
+        Integer batchRunCount = 2;
+        String allErrorMessages = 'Test Error';
+        String creationErrorTable = 'Test Creation Error Table';
+        String updateerrorTable = 'Test Update Error Table';
+        Map<String, Integer> processSummary = new Map<String, Integer>();
+        
+        String importType = 'Form_40';
+        Integer insertedAccounts   = 0;
+        Integer insertedCaseRoles  = 0;
+        Integer insertedPayees     = 0;
+        Integer updatedCaseIssues  = 0;
+        Integer updatedCases       = 0;
+        boolean shouldRunSecondBatch = false;
+        Integer NumberofImportRecordsInserted = 0;
+        
+        List<DIR_Case__c> getCase = [SELECT Id FROM DIR_Case__c];
+		List<BatchEmailService.WrapperError> failedRecords = new List<BatchEmailService.WrapperError>();
+        
+        for(Integer i=0; i<5; i++){
+        }
+        BatchEmailService.BatchSummaryWrapper wrap = new BatchEmailService.BatchSummaryWrapper();
+        
+        wrap.caseId                         =  getCase[0].Id;
+        wrap.importType                     = importType;
+        wrap.insertedAccounts               = insertedAccounts;
+        wrap.insertedCaseRoles              = insertedCaseRoles;
+        wrap.insertedPayees                 = insertedPayees;
+        wrap.successCountPayee              = successCountPayee;
+        wrap.failureCountPayee              = failureCountPayee;
+        wrap.batchError                     = batchError;
+        wrap.batchRunCount                  = batchRunCount;
+        wrap.numberOfImportRecordsInserted  = NumberofImportRecordsInserted;
+        wrap.allErrorMessages               = allErrorMessages;
+        wrap.creationErrorTable             = creationErrorTable;
+        wrap.updateErrorTable               = updateerrorTable;
+        wrap.processSummary                 = processSummary;
+        wrap.processName                    = 'form40ImportControllerReDesigned_Test';
+        wrap.reverted                       = false;
+        wrap.failedRecordsDelete                 = failedRecords;
+        wrap.failedRecordsRevert                 = failedRecords;
+        wrap.correctiveForm40DeleteSuccess      = failedRecords;
+        wrap.correctiveForm40DeleteError        = failedRecords;
+        
+                List<DIR_Violation__c> queriedCaseIssues = [SELECT Id, Violation_Type__c, Case__c, Assessment__c, Citation_Amount__c,
+                                                    Wages_Due__c, Original_Penalty_Assessment_Amount__c,
+                                                    Total_Interest_Amount__c, Status__c,
+                                                    Post_Citation_Interest_for_Wages__c, Post_Judgment_Interest_for_Wages__c,
+                                                    Citation_Date__c, RecordTypeId FROM DIR_Violation__c];
+         
+        Set<Id> setOfCaseIssueIds = new Set<Id>();
+        for(DIR_Violation__c caseIssueId : queriedCaseIssues){
+            setOfCaseIssueIds.add(caseIssueId.Id);
+        }
+        Test.startTest();
+        Database.executeBatch(new CorrectiveForm40PayeeDeletion(wrap, uniqueKey, setOfCaseIssueIds), 200);
+		DataBase.executeBatch(new UpdateAmountUtilizedByPayee(wrap), 200);
+        System.enqueueJob(new IC_RollUpPayeeQueueable(wrap));
+        Test.stopTest();
+        
+        wrap.caseId =  Null;
+        System.enqueueJob(new IC_RollUpPayeeQueueable(wrap));
+        Database.executeBatch(new CorrectiveForm40PayeeDeletion(wrap, uniqueKey, setOfCaseIssueIds), 200);
     }
 }

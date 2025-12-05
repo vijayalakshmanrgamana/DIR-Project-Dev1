@@ -1,5 +1,5 @@
 public without  sharing class PayeeAssociation {
-    
+     
     public PayeeAssociation(){
         this.caseIssueBreakdown = 0;
         this.netWagesBreakdown = 0;
